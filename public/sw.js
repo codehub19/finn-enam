@@ -19,4 +19,3 @@ self.addEventListener('notificationclick',event=>{
     return existing?existing.navigate('/#briefing').then(c=>c?.focus()):self.clients.openWindow('/#briefing');
   }));
 });
-

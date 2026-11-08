@@ -249,4 +249,3 @@ export function reportDiff(old,next){
   if(next.mode==='live'&&!next.sources.length) diff.push({label:'Primary source check',before:old.sources.length+' linked',after:'No documents returned'});
   return diff;
 }
-

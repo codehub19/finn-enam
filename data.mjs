@@ -85,4 +85,3 @@ export function briefingSlot(now,calendar){
   const slot=minute>=pre&&minute<pre+20?'pre':minute>=post&&minute<post+60?'post':null;
   return slot?{day,slot}:null;
 }
-

@@ -1,6 +1,6 @@
 # ENAM submission email draft
 
-**Recipient** assessment@enam.com  
+**Recipient** assessment@enam.com
 **Subject** IIT Delhi – AI Engineer - 2027
 
 Hello ENAM team,
@@ -11,10 +11,9 @@ FINN brings the portfolio’s available NSE filings into one inbox, groups routi
 
 I focused on the handoff from a filing or price move to the evidence worth reading. The prototype includes a credential-free sample workspace and a live mode that shows its data coverage. I scoped sector rankings to a disclosed universe, used CSV for portfolio import, and prioritized NSE coverage. My next step would be to broaden annual financial data coverage and validate notifications on more devices using a deployed HTTPS instance.
 
-Prototype: [add deployed URL]  
-GitHub repository: [add repository URL]  
+Prototype: [add deployed URL]
+GitHub repository: [add repository URL]
 AI build conversations: [add shared/exported conversation links]
 
-Thank you,  
+Thank you,
 Lucky Bhuskute
-

@@ -11,4 +11,3 @@ ENV HOST=0.0.0.0 PORT=4173 FINN_DB=/data/finn.sqlite
 USER node
 EXPOSE 4173
 CMD ["node","server.mjs"]
-

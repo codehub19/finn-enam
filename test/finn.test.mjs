@@ -90,4 +90,3 @@ test('PWA shell, private accounts, import, digest, sector rankings and saved-rep
  assert.equal((await api('state',null,a.cookie)).status,401);
  assert.equal((await api('login',{email:'one@example.test',password:'very-long-test-password'})).status,200);
 });
-

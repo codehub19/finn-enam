@@ -22,4 +22,3 @@ for size in (192, 512):
     png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
     png += chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
     (PUBLIC / f'icon-{size}.png').write_bytes(png)
-

@@ -41,4 +41,3 @@ The seed cost basis, market-cap labels, prices, and announcements are illustrati
 Broker import is feasible. Upstox documents an OAuth authorization-code flow and a long-term holdings endpoint with ISIN, symbol, quantity, and average price. Zerodha Kite Connect uses a request-token exchange and access tokens that expire by the next morning. A follow-on would start with a one-time, read-only import and account-bound OAuth state, verify holdings by ISIN and exchange, preview the replacement, and avoid retaining tokens beyond the import. CSV works immediately without broker credentials. [Upstox authentication](https://upstox.com/developer/api-documentation/authentication/) · [Upstox holdings](https://upstox.com/developer/api-documentation/get-holdings/) · [Kite login](https://www.kite.trade/docs/connect/v3/user/)
 
 See [Deployment](DEPLOYMENT.md), [Build history](BUILD_HISTORY.md), and [Covering note](COVERING_NOTE.md).
-

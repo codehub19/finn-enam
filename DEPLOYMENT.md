@@ -33,4 +33,3 @@ For a direct Node deployment, run `npm ci`, install `poppler-utils` with the hos
 4. Regular-session windows open at 08:55 and 16:00 Asia/Kolkata. The minute-based scheduler polls cached filings for selected material categories and deduplicates deliveries by endpoint and event. EOD anomalies are included in the after-close briefing, or sent separately when triggered alerts are enabled and the after-close briefing is disabled. Missing coverage is shown in the after-close notification. Browser and OS delivery timing may vary.
 
 For submission, verify signup, filing coverage, INFY research, app install, and delivery to a consenting test device from the actual HTTPS origin before sharing its URL. The prototype has no email verification or account recovery. Limit access to evaluators when piloting.
-

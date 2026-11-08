@@ -6,4 +6,3 @@ node_modules
 test
 scripts/*
 !scripts/pdf_text.py
-

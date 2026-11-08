@@ -216,5 +216,3 @@ install.onclick=async()=>{await installPrompt?.prompt();install.hidden=true;inst
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 try{state=await api('state');}catch(error){if(error.message!=='Sign in to continue.')notify(error.message);}
 render();
-
-

@@ -20,4 +20,3 @@ export function extractPdf(bytes){
     proc.stdin.end(bytes);
   });
 }
-

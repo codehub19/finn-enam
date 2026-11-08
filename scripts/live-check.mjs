@@ -7,4 +7,3 @@ console.log(JSON.stringify({
   sources:report.sources,
   aiStatus:report.aiStatus
 },null,2));
-

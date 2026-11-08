@@ -13,4 +13,3 @@
 
 - Product design chat: [Explain Challenge Requirements](chatgpt-conversation://6af0427f-73e8-83e8-acf7-78c4da456e93)
 - Implementation: the current Codex conversation, which contains the implementation decisions, tool calls and test results. Export or share the conversation from Codex and add the evaluator-accessible link to the covering email. This repository contains a milestone history. The chat share/export is a separate submission item.
-

@@ -6,7 +6,8 @@
 2. Created a mobile-first account workspace with a curated NSE portfolio. Implemented private SQLite state and separate sample/live modes so reviewers can evaluate the experience without provider keys.
 3. Built deterministic filing prioritization, anomaly detection, rolling returns, coverage-aware sector rankings, XBRL-derived ratios, and source-aware report comparison. Kept the language model limited to interpreting fetched primary excerpts.
 4. Connected the service worker, subscription management and IST scheduler. Push setup is explicit and the server requires a verified current-year calendar.
-5. Exercised the prototype with automated tests for calculations, calendar exclusions, CSV import, report saving and recheck, sector ranking, the PWA shell, and cross-account access. Verified live Yahoo Finance and NSE responses separately.
+5. Passed five automated tests covering calculations, calendar exclusions, CSV import, report saving and recheck, sector ranking, the PWA shell, and cross-account access. The in-app browser walkthrough confirmed signup, theme switching, anomaly scanning, INFY research, report saving, watchlisting and recheck.
+6. Verified live Yahoo Finance quotes and NSE announcements. A live INFY run read the FY2025–26 Infosys annual report and the October 2026 earnings-call filing, and computed ratios from the latest comparable annual SEC facts returned in the test. That structured feed returned FY2024–25 figures. Live model output and browser push delivery need configured credentials and were outside the verification run.
 
 ## AI conversation records
 

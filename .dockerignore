@@ -1,0 +1,9 @@
+.git
+.openai
+.env
+*.sqlite*
+node_modules
+test
+scripts/*
+!scripts/pdf_text.py
+

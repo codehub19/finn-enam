@@ -1,0 +1,16 @@
+{
+  "name": "finn-enam",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --test"
+  },
+  "optionalDependencies": {
+    "web-push": "3.6.7"
+  }
+}

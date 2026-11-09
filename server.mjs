@@ -6,7 +6,7 @@ import {randomBytes,randomUUID,scrypt,timingSafeEqual,createHash} from 'node:cry
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
-import {filings,quote,research,reportDiff,statements,searchEquities} from './providers.mjs';
+import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight} from './providers.mjs';
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
 const path=resolve(process.env.FINN_DB||resolve(root,'finn.sqlite'));
@@ -73,17 +73,18 @@ async function mapLimit(list, concurrency, fn){
   }));
   return result;
 }
-async function digest(data,hours){
+async function digest(data,hours,refresh=false){
   const held=new Set(data.holdings.map(h=>h.symbol));
+  const watched=new Set(data.watch);
   const sectors=new Set(catalog.filter(s=>held.has(s.symbol)).map(s=>s.sector));
   const related=new Set(catalog.filter(s=>!held.has(s.symbol)&&sectors.has(s.sector)).map(s=>s.symbol));
-  const {rows,...feed}=await filings(hours,data.mode);
+  const {rows,...feed}=await filings(hours,data.mode,refresh);
   const ranked=rows.map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
     .sort((a,b)=>Number(b.alert)-Number(a.alert)||Number(a.category==='Routine')-Number(b.category==='Routine')||b.timestamp-a.timestamp);
-  return {...feed,owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine')};
+  return {...feed,checkedAt:new Date().toISOString(),owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
 }
-async function scan(data,todayOnly=false){
-  const results=await mapLimit(data.holdings,6,h=>quote(h.symbol,data.mode).then(price=>({symbol:h.symbol,...price})));
+async function scan(data,todayOnly=false,refresh=false){
+  const results=await mapLimit(data.holdings,6,h=>quote(h.symbol,data.mode,refresh).then(price=>({symbol:h.symbol,...price})));
   const alerts=results.filter(q=>(!todayOnly||q.date===dateIST())&&(Math.abs(q.day??0)>=data.settings.price||(q.volume??0)>=data.settings.volume));
   const checks=await mapLimit(alerts,3,async row=>{
     const reasons=[];
@@ -98,7 +99,8 @@ async function scan(data,todayOnly=false){
     if(ratios?.returnOnEquity<0) flags.push('Return on equity was negative');
     return {...row,reasons,ratios,flags,fundamentalSource:annual?.source};
   });
-  return {alerts:checks,coverage:results.filter(r=>r.date).length,total:results.length};
+  const priced=results.filter(r=>r.date&&(!todayOnly||r.date===dateIST()));
+  return {alerts:checks,coverage:priced.length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',
@@ -114,8 +116,8 @@ try{
   }
 }catch(error){console.error('Push configuration:',error.message);}
 try{
-  if(process.env.NSE_CALENDAR){
-    const value=JSON.parse(await readFile(resolve(process.env.NSE_CALENDAR),'utf8'));
+  if(process.env.NSE_CALENDAR||dateIST().startsWith('2026-')){
+    const value=JSON.parse(await readFile(resolve(process.env.NSE_CALENDAR??resolve(root,'config/nse-2026.json')),'utf8'));
     const validDay=d=>/^\d{4}-\d{2}-\d{2}$/.test(d)&&d.startsWith(String(value.year)+'-')&&Number.isFinite(Date.parse(d));
     const validMinute=n=>Number.isInteger(n)&&n>=0&&n<1440;
     if(Number.isInteger(value.year)&&Array.isArray(value.holidays)&&value.holidays.length&&value.holidays.every(validDay)&&Object.entries(value.special??{}).every(([d,s])=>validDay(d)&&validMinute(s?.pre)&&validMinute(s?.post)&&s.pre+20<=s.post)) calendar=value;
@@ -185,9 +187,22 @@ async function route(req,res){
     if(p==='/api/digest'){
       const hours=Number(url.searchParams.get('hours')??24);
       if(![24,48,72,168].includes(hours)) throw fail(400,'Choose a supported time window.');
-      return json(res,200,await digest(data,hours));
+      const refresh=url.searchParams.get('refresh')==='1';
+      if(refresh)limit('digest:'+user.id,12,600000);
+      return json(res,200,await digest(url.searchParams.get('live')==='1'?{...data,mode:'live'}:data,hours,refresh));
     }
-    if(p==='/api/scan'){limit('scan:'+user.id,8,600000);return json(res,200,await scan(data));}
+    if(p==='/api/scan'){
+      limit('scan:'+user.id,12,600000);
+      return json(res,200,await scan(url.searchParams.get('live')==='1'?{...data,mode:'live'}:data,false,url.searchParams.get('refresh')==='1'));
+    }
+    if(p==='/api/filing-detail'){
+      limit('filing-detail:'+user.id,25,600000);
+      const feed=await digest({...data,mode:'live'},168);
+      if(feed.error)throw fail(503,'NSE filings are temporarily unavailable.');
+      const row=[...feed.owned,...feed.related,...feed.watch].find(f=>f.id===url.searchParams.get('id'));
+      if(!row)throw fail(404,'This filing is outside your current briefing.');
+      return json(res,200,await filingInsight(row));
+    }
     if(p==='/api/sector'){
       limit('sector:'+user.id,24,600000);
       const sector=url.searchParams.get('name'), days=Number(url.searchParams.get('days'));
@@ -294,8 +309,7 @@ async function tick(){
     db.prepare('DELETE FROM deliveries WHERE created<?').run(Date.now()-14*86400000);
     const subscribers=db.prepare('SELECT subscriptions.*,users.data AS preferences FROM subscriptions JOIN users ON owner=users.id').all();
     await mapLimit(subscribers,3,async subscription=>{
-      const data=JSON.parse(subscription.preferences);
-      if(data.mode!=='live') return;
+      const data={...JSON.parse(subscription.preferences),mode:'live'};
       if(slot?.slot==='post'&&data.settings.instant&&!data.settings.post){
         const key=slot.day+':eod-moves';
         if(!db.prepare('SELECT 1 FROM deliveries WHERE endpoint=? AND event=?').get(subscription.endpoint,key)){

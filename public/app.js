@@ -29,8 +29,9 @@ const button=(label,attrs='',style='')=>'<button type="button" class="'+style+'"
 const tag=value=>'<span class="tag">'+escape(value)+'</span>';
 const metric=(label,value)=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(value)+'</strong></div>';
 const panel=(title,body)=>'<section class="panel"><h2>'+title+'</h2>'+body+'</section>';
-const hero=(label,title,detail)=>'<section class="hero"><div class="hero-top"><p class="eyebrow">'+label+'</p>'+tag(state.mode==='demo'?'Sample workspace':'Live workspace')+'</div><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
-let state, report, authMode='register', hours=24, timer, generation=0, installPrompt, researchSequence=0;
+const hero=(label,title,detail)=>'<section class="page-heading"><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
+const loading=(label,detail='')=>'<div class="loading" role="status"><span class="spinner" aria-hidden="true"></span><div><strong>'+escape(label)+'</strong>'+(detail?'<p class="muted">'+escape(detail)+'</p>':'')+'</div></div>';
+let state, report, researchPending, authMode='register', hours=24, timer, generation=0, installPrompt, researchSequence=0;
 const section=()=>['briefing','portfolio','research','saved','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
 async function api(path,payload){
@@ -40,9 +41,13 @@ async function api(path,payload){
   return result;
 }
 async function act(control,task){
+  const original=[...control.childNodes];
+  const pending=control.tagName==='BUTTON';
   control.disabled=true;
+  control.setAttribute('aria-busy','true');
+  if(pending)control.textContent=control.dataset.pending??'Working…';
   try{await task();}catch(error){notify(error.message);}
-  finally{control.disabled=false;}
+  finally{control.disabled=false;control.removeAttribute('aria-busy');if(pending)control.replaceChildren(...original);}
 }
 function stockPicker(id){
   return '<div class="stock-picker"><label for="'+id+'">Find an NSE company</label><div class="stock-input">'+icon('search')+
@@ -119,7 +124,7 @@ logout.onclick=()=>act(logout,async()=>{
     const subscription=await registration?.pushManager.getSubscription();
     if(subscription){await api('subscription',{remove:true,endpoint:subscription.endpoint});await subscription.unsubscribe();}
   }catch(error){notify('Push cleanup failed: '+error.message);return;}
-  await api('logout',{});state=null;report=null;render();
+  await api('logout',{});state=null;report=null;researchPending=null;render();
 });
 function render(){
   const id=++generation;
@@ -131,30 +136,54 @@ function render(){
   ({briefing,portfolio,research,saved,settings}[name])(id);
 }
 function article(row){
-  return '<article class="row"><div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h3>'+escape(row.title)+'</h3><p class="muted">'+escape(row.detail)+'</p><p><strong>Why it matters</strong> · '+escape(row.why)+'</p><small>'+escape(row.category)+' '+link(row.url,'Open filing ↗')+'</small></article>';
+  const canExpand=['Results','Management'].includes(row.category);
+  return '<article class="row"><div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h3>'+escape(row.title)+'</h3><p class="muted">'+escape(row.detail)+'</p><p><strong>Why it matters</strong> · '+escape(row.why)+'</p><div class="actions">'+(canExpand?button(row.category==='Results'?'See reported figures':'See leadership context','data-filing="'+escape(row.id)+'"'):'')+'<small>'+escape(row.category)+' '+link(row.url,'Original filing ↗')+'</small></div><div class="filing-detail"></div></article>';
 }
 function briefing(id){
-  main.innerHTML=hero('01 / Push','Your briefing','See what changed across your holdings, with routine filings grouped separately.')+
-    '<div class="grid">'+panel('Portfolio filings','<div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div><div id="filings"><p class="muted">Loading filings…</p></div>')+
-    panel('Unusual moves','<p class="muted">Completed sessions only. Price ±'+state.settings.price+'% or volume ≥ '+state.settings.volume+'× the previous 20 sessions.</p>'+button('Scan holdings','id="scan"','primary')+'<div id="moves"></div>')+'</div>'+
-    panel('Sector & peer filings','<div id="related"><p class="muted">Loading related filings…</p></div>');
-  document.querySelector('#window').onchange=e=>{hours=Number(e.target.value);render();};
-  api('digest?hours='+hours).then(data=>{
-    if(id!==generation)return;
-    const important=data.owned.filter(r=>r.category!=='Routine'), routine=data.owned.filter(r=>r.category==='Routine');
-    document.querySelector('#filings').innerHTML='<p class="muted">'+escape(data.scope)+'</p>'+(data.error?'<p class="error">'+escape(data.error)+'</p>':
-      '<p>'+data.owned.length+' filings · '+data.owned.filter(r=>r.alert).length+' selected alerts</p>'+(important.map(article).join('')||'<p class="muted">No material portfolio filings in this window.</p>')+
-      (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(article).join('')+'</details>':''));
-    document.querySelector('#related').innerHTML=data.error?'<p class="muted">Peer context is unavailable with the filing feed.</p>':data.related.map(article).join('')||'<p class="muted">No material filings from non-holding peers in the tracked sectors.</p>';
-  }).catch(error=>{if(id===generation)document.querySelector('#filings').textContent=error.message;});
-  document.querySelector('#scan').onclick=e=>act(e.target,async()=>{
-    const moves=document.querySelector('#moves');moves.textContent='Checking price and volume…';
+  main.innerHTML=hero('','Briefing','Live NSE filings and completed-session moves for your portfolio.')+
+    '<div class="brief-toolbar"><div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>'+button('Run live briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div><div id="brief-status" aria-live="polite"></div>'+
+    '<div class="grid">'+panel('Portfolio filings','<div id="filings"></div>')+
+    panel('Unusual moves','<p class="muted">Price ±'+state.settings.price+'% or volume ≥ '+state.settings.volume+'× the previous 20 sessions.</p>'+button('Check price and volume','id="scan" data-pending="Checking holdings…"')+'<div id="moves"></div>')+'</div>'+
+    panel('Watchlist and sector peers','<div id="related"></div>');
+  const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), scanButton=document.querySelector('#scan');
+  const filings=document.querySelector('#filings'), related=document.querySelector('#related'), moves=document.querySelector('#moves'), status=document.querySelector('#brief-status');
+  let revision=0;
+  async function loadFilings(refresh){
+    const request=++revision;
+    filings.innerHTML=loading('Checking NSE filings…','Reviewing portfolio announcements for the selected window.');
+    related.textContent='';
     try{
-      const scan=await api('scan');
+      const data=await api('digest?live=1&hours='+hours+(refresh?'&refresh=1':''));
+      if(id!==generation||request!==revision)return;
+      if(data.error){filings.innerHTML='<p class="error">NSE filings are unavailable right now. Try running the briefing again.</p>';return;}
+      const important=data.owned.filter(r=>r.category!=='Routine'), routine=data.owned.filter(r=>r.category==='Routine');
+      filings.innerHTML='<p class="muted">'+data.owned.length+' filings · '+data.owned.filter(r=>r.alert).length+' selected alerts · Checked '+escape(when(data.checkedAt))+'</p>'+
+        (important.map(article).join('')||'<p class="muted">No material portfolio filings in this window. You can widen the lookback above.</p>')+
+        (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(article).join('')+'</details>':'');
+      const peers=data.related.filter(row=>!data.watch.some(item=>item.id===row.id));
+      related.innerHTML=(data.watch.length?'<h3>Watchlist</h3>'+data.watch.map(article).join(''):'')+
+        (peers.length?'<details><summary>Sector peers ('+peers.length+')</summary>'+peers.map(article).join('')+'</details>':'')||
+        '<p class="muted">No material filings for tracked peers or watchlist companies in this window.</p>';
+    }catch(error){if(id===generation&&request===revision)filings.textContent=error.message;}
+  }
+  async function loadMoves(refresh){
+    moves.innerHTML=loading('Checking price and volume…','Comparing completed trading sessions.');
+    try{
+      const scan=await api('scan?live=1'+(refresh?'&refresh=1':''));
       if(id!==generation)return;
-      moves.innerHTML='<p class="muted">'+scan.coverage+' of '+scan.total+' holdings priced.</p>'+(scan.alerts.map(a=>'<article class="row"><h3>'+escape(a.symbol)+'</h3><p>'+format(a.day,'%')+' · '+format(a.volume,'×')+' · '+escape(a.date)+'</p><p>'+escape(a.reasons.join(' · '))+'</p><p class="muted">'+escape(a.ratios?a.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(a.fundamentalSource,'Annual filing ↗')+'</p>'+button('Research','data-research="'+escape(a.symbol)+'"')+'</article>').join('')||'<p class="muted">'+(scan.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
+      moves.innerHTML='<p class="muted">'+scan.coverage+' of '+scan.total+' holdings priced'+(scan.asOf?' · Latest session '+escape(scan.asOf):'')+'.</p>'+(scan.alerts.map(a=>'<article class="row"><h3>'+escape(a.symbol)+'</h3><p>'+format(a.day,'%')+' · '+format(a.volume,'×')+' · '+escape(a.date)+'</p><p>'+escape(a.reasons.join(' · '))+'</p><p class="muted">'+escape(a.ratios?a.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(a.fundamentalSource,'Annual filing ↗')+'</p>'+button('Research','data-research="'+escape(a.symbol)+'" data-live="1"')+'</article>').join('')||'<p class="muted">'+(scan.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
     }catch(error){moves.textContent=error.message;}
+  }
+  windowSelect.onchange=e=>{hours=Number(e.target.value);void loadFilings(false);};
+  scanButton.onclick=()=>act(scanButton,async()=>{run.disabled=true;try{await loadMoves(true);}finally{run.disabled=false;}});
+  run.onclick=()=>act(run,async()=>{
+    scanButton.disabled=true;
+    windowSelect.disabled=true;
+    status.innerHTML=loading('Building your live briefing…','Filings and price checks will appear as they finish.');
+    try{await Promise.all([loadFilings(true),loadMoves(true)]);}
+    finally{status.replaceChildren();scanButton.disabled=false;windowSelect.disabled=false;}
   });
+  void loadFilings(false);
 }
 function portfolio(){
   const stock=symbol=>state.catalog.find(s=>s.symbol===symbol);
@@ -209,30 +238,47 @@ function portfolio(){
     act(e.submitter,async()=>{Object.assign(state,await api('import',{csv:await file.text()}));render();notify('Portfolio imported.');});
   };
 }
+function quarterlyHTML(detail){
+  const q=detail.quarterly;
+  if(!q)return '';
+  const divisor=detail.currency==='INR'?10000000:1000000;
+  return '<p class="muted">Quarter ended '+escape(q.period)+' · '+(detail.currency==='INR'?'₹ crore':'USD millions')+(detail.basis?' · '+escape(detail.basis):'')+' '+link(detail.source,'Reported facts ↗')+'</p><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Reported</th><th>QoQ</th><th>YoY</th></tr></thead><tbody>'+q.rows.map(row=>'<tr><td>'+escape(row.label)+'</td><td>'+format(row.value===null?null:row.value/divisor)+'</td><td>'+format(row.qoq,'%')+'</td><td>'+format(row.yoy,'%')+'</td></tr>').join('')+'</tbody></table></div>';
+}
 function reportHTML(r){
   const returns=r.price.returns;
   const inr=r.annual?.currency==='INR';
   const units=inr?'₹ crore':'USD million', divisor=inr?10000000:1000000;
-  return '<div class="row-head"><h2>'+escape(r.symbol)+' research</h2>'+tag(r.mode==='demo'?'Sample prices':'Live request')+'</div>'+
+  const insights=(r.insights??[]).map(s=>'<article class="insight"><h3>'+escape(s.title)+'</h3>'+
+    (s.note?'<p>'+escape(s.note)+'</p>':'')+
+    (s.evidence?'<p class="muted evidence">“'+escape(s.evidence.text)+'” <a href="#source-'+escape(s.evidence.source)+'" data-source-index="'+escape(s.evidence.source)+'">['+escape(s.evidence.source)+']</a></p>':'')+
+    (!s.note&&!s.evidence?'<p class="muted">Evidence was unavailable.</p>':'')+'</article>').join('');
+  const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  return '<div class="row-head"><h2>'+escape(r.symbol)+' research</h2>'+tag(r.mode==='demo'?'Sample prices':'Live research')+'</div>'+
+    (r.narrative?'<div class="research-summary"><h3>Research brief</h3><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
+    (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'')+
+    (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
     '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric('Daily adjusted return',format(r.price.day,'%'))+metric('Volume / 20-session mean',format(r.price.volume,'×'))+'</div>'+
     (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
     '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>'+
-    '<div class="row"><h3>What management says</h3><p class="muted">'+escape(r.aiStatus)+'</p>'+(r.narrative?'<p class="preline">'+escape(r.narrative)+'</p>':'')+'</div>'+
-    '<div class="row"><h3>Primary documents</h3>'+(r.sources.map((s,i)=>'<p>['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</div>';
+    trends+'<details class="report-sources"><summary>Sources and coverage</summary><p class="muted">'+escape(r.aiStatus)+'</p>'+
+    (r.sources.map((s,i)=>'<p data-report-source="'+(i+1)+'">['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</details>';
 }
+const researchLoading=symbol=>loading('Researching '+symbol+'…','Fetching price history, company filings and earnings calls. Sources are checked before the report is shown.');
 function research(id){
   const sectors=[...new Set(state.catalog.map(s=>s.sector))].sort();
   main.innerHTML=hero('03 / Pull','Research desk','Look up an NSE company, compare performance, and save a report you can recheck later.')+
-    '<div class="grid">'+panel('Company search',stockPicker('research-search')+'<p class="muted">Choose a result to run live research. Data coverage varies by issuer.</p><p class="eyebrow">Quick picks · '+(state.mode==='demo'?'Sample':'Live')+'</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
+    '<div id="research-progress" aria-live="polite">'+(researchPending?researchLoading(researchPending):'')+'</div>'+
+    '<div class="grid">'+panel('Company search',stockPicker('research-search')+'<p class="muted">Choose a company to read the findings here. Source coverage varies by issuer.</p><p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
     panel('Sector leaders','<form id="sector"><div class="fields"><label>Sector<select name="name">'+sectors.map(s=>'<option>'+escape(s)+'</option>').join('')+'</select></label><label>Window<select name="days"><option value="21">21 sessions</option><option value="63" selected>63 sessions</option><option value="252">252 sessions</option></select></label></div><button>Rank tracked stocks</button></form><div id="leaders"></div>')+'</div>'+
     '<section class="panel" id="report" '+(report?'':'hidden')+'>'+ (report?reportHTML(report)+ '<div class="actions">'+button('Save report','id="save"','primary')+button(state.watch.includes(report.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(report.symbol)+'"')+'</div>':'')+'</section>';
   bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
   document.querySelector('#sector').onsubmit=e=>{
     e.preventDefault();const params=new URLSearchParams(new FormData(e.target));
     act(e.submitter,async()=>{
-      const target=document.querySelector('#leaders');target.textContent='Loading sector quotes…';
+      const target=document.querySelector('#leaders');target.innerHTML=loading('Ranking stocks…','Checking which tickers have comparable price history.');
       try{
         const data=await api('sector?'+params);
         if(id!==generation)return;
@@ -253,18 +299,25 @@ async function runResearch(symbol,control,live=false){
   if(section()!=='research'){location.hash='research';}
   const current=state;
   const request=++researchSequence;
+  researchPending=symbol;
+  const progress=document.querySelector('#research-progress');
+  if(progress){progress.innerHTML=researchLoading(symbol);progress.scrollIntoView({block:'nearest'});}
   const pickerStatus=live?document.querySelector('#research-search-status'):null;
   if(pickerStatus)pickerStatus.textContent='Fetching live research for '+symbol+'…';
   await act(control,async()=>{
-    notify('Researching '+symbol.toUpperCase()+'…');
     try{
       const result=await api('research',{symbol,...(live?{live:true}:{})});
-      if(request!==researchSequence||state!==current||section()!=='research')return;
-      report=result;render();document.querySelector('#report')?.scrollIntoView({block:'start'});notify('Research ready.');
+      if(request!==researchSequence||state!==current)return;
+      researchPending=null;
+      report=result;
+      if(section()!=='research')return;
+      render();document.querySelector('#report')?.scrollIntoView({block:'start'});
     }catch(error){
-      if(request!==researchSequence)return;
+      if(request!==researchSequence||state!==current)return;
+      researchPending=null;
+      const currentProgress=document.querySelector('#research-progress');
+      if(currentProgress)currentProgress.innerHTML='<p class="error">'+escape(error.message)+'</p>';
       if(pickerStatus?.isConnected)pickerStatus.textContent=error.message;
-      throw error;
     }
   });
 }
@@ -278,7 +331,7 @@ function settings(){
   const check=(name,label,enabled)=>'<label class="check"><input name="'+escape(name)+'" type="checkbox" '+(enabled?'checked':'')+'>'+escape(label)+'</label>';
   main.innerHTML=hero('05 / Configure','Your settings','Choose the feed, tune what counts as unusual, and manage browser notifications.')+
     panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+check('instant','Material filings as detected and EOD threshold alerts',s.instant)+'</details><button class="primary">Save preferences</button></form>')+
-    panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live mode, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted">Install from the browser menu or Add to Home Screen on iPhone. Push support depends on browser and OS.</p>');
+    panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
   document.querySelector('#prefs').onsubmit=e=>{
     e.preventDefault();const f=new FormData(e.target);
     act(e.submitter,async()=>{
@@ -294,23 +347,40 @@ function settings(){
     const encoded=state.push.publicKey.replace(/-/g,'+').replace(/_/g,'/');
     const key=Uint8Array.from(atob(encoded.padEnd(Math.ceil(encoded.length/4)*4,'=')),c=>c.charCodeAt(0));
     const sub=await reg.pushManager.getSubscription()??await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
-    await api('subscription',sub.toJSON());notify('Notifications enabled on this device.');
+    await api('subscription',sub.toJSON());document.querySelector('#notification-status').textContent='Notifications enabled on this device.';
   });
   document.querySelector('#unsubscribe').onclick=e=>act(e.target,async()=>{
     const reg=await navigator.serviceWorker?.getRegistration(), sub=await reg?.pushManager.getSubscription();
     if(sub){await api('subscription',{endpoint:sub.endpoint,remove:true});await sub.unsubscribe();}
-    notify('Device notifications disabled.');
+    document.querySelector('#notification-status').textContent='Device notifications disabled.';
   });
 }
 main.addEventListener('click',e=>{
+  const citation=e.target.closest('[data-source-index]');
+  if(citation){
+    e.preventDefault();
+    const sources=citation.closest('section, details')?.querySelector('.report-sources');
+    if(sources){sources.open=true;sources.querySelector('[data-report-source="'+citation.dataset.sourceIndex+'"]')?.scrollIntoView({block:'nearest'});}
+    return;
+  }
   const control=e.target.closest('button');
   if(!control||!state)return;
   const d=control.dataset;
-  if(d.research)void runResearch(d.research,control);
+  if(d.research)void runResearch(d.research,control,true);
+  if(d.filing)act(control,async()=>{
+    const target=control.closest('article').querySelector('.filing-detail');
+    target.innerHTML=loading('Reading the disclosure…');
+    try{
+      const detail=await api('filing-detail?id='+encodeURIComponent(d.filing));
+      target.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+
+        (detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+
+        quarterlyHTML(detail);
+    }catch(error){target.textContent=error.message;}
+  });
   if(d.watch)act(control,async()=>{Object.assign(state,await api('watch',{symbol:d.watch,remove:state.watch.includes(d.watch)}));render();});
   if(d.delete)act(control,async()=>{Object.assign(state,await api('remove-report',{id:d.delete}));render();});
   if(d.recheck)act(control,async()=>{
-    const target=document.querySelector('#diff-'+d.recheck);target.textContent='Checking latest available sources…';
+    const target=document.querySelector('#diff-'+d.recheck);target.innerHTML=loading('Rechecking this report…','Comparing the saved report with the latest available prices and primary sources.');
     try{
       const {diff,next}=await api('recheck',{id:d.recheck});
       target.innerHTML='<p class="muted">Checked '+escape(when(next.createdAt))+'</p>'+(diff.map(x=>'<p><strong>'+escape(x.label)+'</strong> · '+escape(typeof x.before==='number'?format(x.before):x.before)+' → '+escape(typeof x.after==='number'?format(x.after):x.after)+'</p>').join('')||'<p>No change detected in comparable fields.</p>')+'<details><summary>View fresh report</summary>'+reportHTML(next)+'</details>';

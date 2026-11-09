@@ -17,11 +17,11 @@ export const seeded = catalog.filter(s=>!s.demo).map((s,i)=>({symbol:s.symbol,qu
 export const categories=['Results','M&A','Management','Capital','Legal','Routine'];
 export function classify(text) {
   const rules = [
-    ['Results',/financial results|quarterly results|earnings|audited results/],
+    ['Results',/financial results|quarterly results|audited results|integrated filing.{0,8}financial/],
     ['M&A',/acqui[rs]|merger|amalgamation|takeover|divest/],
     ['Management',/change in management|resign|director appointment|appointment.*director|chief executive|management change/],
     ['Capital',/dividend|buyback|fund rais|preferential|stock split|bonus issue/],
-    ['Legal',/penalty|litigation|fraud|regulatory action|default/]
+    ['Legal',/penalty|litigation|fraud|regulatory (action|order)|default/]
   ];
   return rules.find(([, pattern])=>pattern.test(text.toLowerCase()))?.[0] ?? 'Routine';
 }

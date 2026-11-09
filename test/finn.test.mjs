@@ -7,6 +7,26 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {metrics,briefingSlot,csvHoldings,classify,fundamentals} from '../data.mjs';
 import {reportDiff,parseEquityDirectory} from '../providers.mjs';
+import {parseNseQuarterly,quarterlyComparison,reportInsights} from '../insights.mjs';
+test('reported quarterly results compare like periods and keep missing figures blank',()=>{
+ const xml='<x:unit id="INR"><x:measure>iso:INR</x:measure></x:unit>'+
+  '<x:context id="quarter"><x:startDate>2026-07-01</x:startDate><x:endDate>2026-09-30</x:endDate></x:context>'+
+  '<x:context id="annual"><x:startDate>2025-10-01</x:startDate><x:endDate>2026-09-30</x:endDate></x:context>'+
+  '<n:RevenueFromOperations contextRef="annual" unitRef="INR">900</n:RevenueFromOperations>'+
+  '<n:RevenueFromOperations contextRef="quarter" unitRef="INR">120</n:RevenueFromOperations>'+
+  '<n:ProfitBeforeTax contextRef="quarter" unitRef="INR">16</n:ProfitBeforeTax>'+
+  '<n:FinanceCosts contextRef="quarter" unitRef="INR">2</n:FinanceCosts>'+
+  '<n:DepreciationDepletionAndAmortisationExpense contextRef="quarter" unitRef="INR">3</n:DepreciationDepletionAndAmortisationExpense>';
+ const [latest]=parseNseQuarterly(xml);
+ assert.equal(latest.revenue,120);
+ assert.equal(latest.ebitdaProxy,21);
+ const compare=quarterlyComparison([latest,{end:'2026-06-30',revenue:100},{end:'2025-09-30',revenue:80}]);
+ assert.ok(Math.abs(compare.rows[0].qoq-20)<1e-8);
+ assert.equal(compare.rows[0].yoy,50);
+ assert.equal(compare.rows[3].value,null);
+ const insights=reportInsights([{type:'Annual report',text:'The company serves customers through its services and products in several business segments.'}],null);
+ assert.equal(insights[0].evidence.source,1);
+});
 test('NSE equity directory handles quoted names and filters unsupported symbols',()=>{
  const csv='SYMBOL, NAME OF COMPANY, SERIES, ISIN NUMBER\r\nACME,"Acme, Ltd.",EQ,INE000000001\r\nINVALID!,Invalid,EQ,INE000000002';
  assert.deepEqual(parseEquityDirectory(csv),[{symbol:'ACME',name:'Acme, Ltd.',isin:'INE000000001',exchange:'NSE'}]);

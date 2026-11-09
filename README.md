@@ -18,7 +18,7 @@ Run `npm test` for the calculation, CSV, calendar and report comparison tests pl
 
 | Area | Behavior |
 | --- | --- |
-| Portfolio | 18 sample NSE-listed holdings across eight sectors and illustrative size bands. Six additional research tickers. Add, edit, remove, or replace holdings with the bundled CSV format. Imported symbols can extend beyond the demo catalog. |
+| Portfolio | 18 sample NSE-listed holdings across eight sectors and illustrative size bands. Search the NSE directory by company name, ticker, or ISIN, then record quantity, average cost and purchase date. Add, edit, remove or replace holdings via CSV. The optional purchase_date column uses YYYY-MM-DD. Each holding stores one purchase date per ticker. |
 | Accounts | Passwords hashed with scrypt and random salts, opaque expiring sessions in HttpOnly cookies, and account-scoped SQLite storage for holdings, reports, preferences, watchlist, and push subscriptions. Use a single instance and a persistent disk. |
 | Push inbox | Select 24, 48, 72, or 168 hours. Lists every matching portfolio filing returned by the NSE equities response, deduplicates by exchange ID, prioritizes selected material categories, and collapses routine filings. Related context comes from other tracked stocks in the same sectors. |
 | Anomalies | Default absolute daily adjusted return ≥ 5% or volume ≥ 2× its previous 20 completed sessions' mean. Both thresholds are editable. When covered annual data is available, live scans flag negative growth, margin, or ROE. |
@@ -27,6 +27,8 @@ Run `npm test` for the calculation, CSV, calendar and report comparison tests pl
 | Install and alerts | Manifest and service worker with offline shell assets. Authenticated data requires a connection. Web Push requires a supported browser, HTTPS, VAPID keys, a current NSE calendar, live mode, and a running server. |
 
 ## Sources and calculations
+
+- **Listed company search.** The authenticated `GET /api/stocks?q=...` route reads NSE’s equity directory, caches it for 24 hours, and returns up to 10 ranked matches. It labels stale and sample results if NSE is unavailable. Choosing a match in Research runs live research for that company without changing the workspace mode. The quick picks still follow the workspace mode. [NSE securities available for trading](https://www.nseindia.com/static/market-data/securities-available-for-trading)
 
 - **Prices and volumes.** Yahoo Finance chart history for `.NS` symbols. Latest return = adjusted close ÷ adjusted close N sessions earlier − 1. Rolling median uses all eligible N-session observations in the returned two-year window. Quote coverage and source dates are visible. The intraday row is excluded until 15:45 IST for normal sessions.
 - **Filings.** The NSE website equities announcements endpoint provides filing titles, disclosure descriptions, time and attachment URLs. FINN retains returned filings in the selected window, including routine items. Exchange feed access, date-range limits and response completeness can vary. The app exposes fetch failures. It cannot certify completeness across exchanges. [NSE corporate announcements](https://www.nseindia.com/companies-listing/corporate-filings-announcements)

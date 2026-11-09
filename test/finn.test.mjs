@@ -6,7 +6,11 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {metrics,briefingSlot,csvHoldings,classify,fundamentals} from '../data.mjs';
-import {reportDiff} from '../providers.mjs';
+import {reportDiff,parseEquityDirectory} from '../providers.mjs';
+test('NSE equity directory handles quoted names and filters unsupported symbols',()=>{
+ const csv='SYMBOL, NAME OF COMPANY, SERIES, ISIN NUMBER\r\nACME,"Acme, Ltd.",EQ,INE000000001\r\nINVALID!,Invalid,EQ,INE000000002';
+ assert.deepEqual(parseEquityDirectory(csv),[{symbol:'ACME',name:'Acme, Ltd.',isin:'INE000000001',exchange:'NSE'}]);
+});
 test('rolling returns and prior-volume baseline',()=>{
  const bars=Array.from({length:22},(_,i)=>({date:String(i),close:100+i,adjusted:100+i,volume:i===21?300:100}));
  const m=metrics(bars);
@@ -20,6 +24,8 @@ test('financial math, ranking rules and CSV validation',()=>{
  assert.equal(classify('Acquisition of a subsidiary'),'M&A');
  assert.equal(classify('Compliance certificate'),'Routine');
  assert.deepEqual(csvHoldings('\uFEFF"symbol",quantity,average_cost\r\ninfy,2,50'),[{symbol:'INFY',quantity:2,average:50}]);
+ assert.deepEqual(csvHoldings('symbol,quantity,average_cost,purchase_date\nINFY,2,50,2024-02-29'),[{symbol:'INFY',quantity:2,average:50,purchaseDate:'2024-02-29'}]);
+ assert.throws(()=>csvHoldings('symbol,quantity,average_cost,purchase_date\nINFY,2,50,2023-02-29'),/Invalid purchase date/);
  assert.throws(()=>csvHoldings('symbol,quantity,average_cost\nINFY,2,0\nINFY,5,4'),/duplicate/);
  assert.throws(()=>csvHoldings('symbol,quantity,average_cost\nINFY,2,Infinity'),/Invalid/);
 });
@@ -82,6 +88,10 @@ test('PWA shell, private accounts, import, digest, sector rankings and saved-rep
  assert.equal((await api('recheck',{id:saved.data.id},b.cookie)).status,404);
  assert.equal((await api('recheck',{id:saved.data.id},a.cookie)).status,200);
  assert.equal((await api('watch',{symbol:'INFY'},a.cookie)).status,200);
+ const holding={symbol:'BAJFINANCE',name:'Bajaj Finance',quantity:4,average:800,purchaseDate:'2025-04-15'};
+ assert.equal((await api('holding',{...holding,purchaseDate:'2025-02-30'},a.cookie)).status,400);
+ assert.equal((await api('holding',holding,a.cookie)).status,200);
+ assert.deepEqual((await api('state',null,a.cookie)).data.holdings.find(h=>h.symbol===holding.symbol),holding);
  assert.equal((await api('import',{csv:'symbol,quantity,average_cost\nINFY,2,100'},a.cookie)).status,200);
  assert.equal((await api('state',null,a.cookie)).data.holdings.length,1);
  const isolated=(await api('state',null,b.cookie)).data;

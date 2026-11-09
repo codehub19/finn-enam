@@ -13,3 +13,8 @@
 
 - Product design chat: [Explain Challenge Requirements](chatgpt-conversation://6af0427f-73e8-83e8-acf7-78c4da456e93)
 - Implementation: the current Codex conversation, which contains the implementation decisions, tool calls and test results. Export or share the conversation from Codex and add the evaluator-accessible link to the covering email. This repository contains a milestone history. The chat share/export is a separate submission item.
+
+## 9 November 2026
+
+- Redesigned the interface around neutral dark and light palettes with periwinkle actions, custom vector marks, frosted navigation, and a shared company picker. Kept data surfaces more opaque to preserve contrast. [Apple materials guidance](https://developer.apple.com/design/human-interface-guidelines/materials) · [TradingView symbol search](https://www.tradingview.com/support/solutions/43000746682-symbol-search-find-any-symbol-on-tradingview/)
+- Connected the picker to the official NSE equity directory. Portfolio now supports purchase dates and a sector allocation view based on cost. Research can use live providers for a selected company while the workspace stays in sample mode.

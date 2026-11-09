@@ -7,6 +7,20 @@ theme.onclick=()=>{
   document.documentElement.dataset.theme=next;localStorage.setItem(themeKey,next);
 };
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const strokes={
+  pulse:'M2 12h4l3-7 4 14 3-7h6',
+  folio:'M3 9 12 4l9 5-9 5-9-5Zm0 5 9 5 9-5',
+  search:'M15.5 15.5 21 21M10 17a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z',
+  mark:'M6 4h12v16l-6-4-6 4V4Z',
+  tune:'M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4',
+  arrow:'M5 12h14m-5-5 5 5-5 5',
+  plus:'M12 5v14M5 12h14',
+  theme:'M12 3v18m0-18a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z'
+};
+const icon=name=>'<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+strokes[name]+'"/></svg>';
+const sectionIcons={briefing:'pulse',portfolio:'folio',research:'search',saved:'mark',settings:'tune'};
+for(const a of nav.querySelectorAll('a'))a.insertAdjacentHTML('afterbegin',icon(sectionIcons[a.hash.slice(1)]));
+theme.insertAdjacentHTML('afterbegin',icon('theme'));
 const money=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2});
 const format=(n,suffix='')=>Number.isFinite(n)?n.toLocaleString('en-IN',{maximumFractionDigits:2})+suffix:'—';
 const when=value=>new Date(value).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
@@ -15,8 +29,8 @@ const button=(label,attrs='',style='')=>'<button type="button" class="'+style+'"
 const tag=value=>'<span class="tag">'+escape(value)+'</span>';
 const metric=(label,value)=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(value)+'</strong></div>';
 const panel=(title,body)=>'<section class="panel"><h2>'+title+'</h2>'+body+'</section>';
-const hero=(label,title,detail)=>'<section class="hero"><p class="eyebrow">'+label+' · '+(state.mode==='demo'?'Sample data':'Live feeds')+'</p><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
-let state, report, authMode='register', hours=24, timer, generation=0, installPrompt;
+const hero=(label,title,detail)=>'<section class="hero"><div class="hero-top"><p class="eyebrow">'+label+'</p>'+tag(state.mode==='demo'?'Sample workspace':'Live workspace')+'</div><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
+let state, report, authMode='register', hours=24, timer, generation=0, installPrompt, researchSequence=0;
 const section=()=>['briefing','portfolio','research','saved','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
 async function api(path,payload){
@@ -29,6 +43,66 @@ async function act(control,task){
   control.disabled=true;
   try{await task();}catch(error){notify(error.message);}
   finally{control.disabled=false;}
+}
+function stockPicker(id){
+  return '<div class="stock-picker"><label for="'+id+'">Find an NSE company</label><div class="stock-input">'+icon('search')+
+    '<input id="'+id+'" type="search" maxlength="100" autocomplete="off" placeholder="Company, ticker or ISIN" aria-describedby="'+id+'-status"></div>'+
+    '<p id="'+id+'-status" class="muted picker-status" role="status">Search the NSE equity directory.</p>'+
+    '<div id="'+id+'-results" class="stock-results" role="group" aria-label="Matching companies" hidden></div></div>';
+}
+function bindPicker(id,onSelect,onClear=()=>{}){
+  const input=document.getElementById(id), status=document.getElementById(id+'-status'), list=document.getElementById(id+'-results');
+  let delay, revision=0;
+  function reset(){
+    ++revision;
+    clearTimeout(delay);
+    list.hidden=true;
+    list.replaceChildren();
+  }
+  input.addEventListener('input',()=>{
+    reset();
+    onClear();
+    const query=input.value.trim();
+    if(!query){status.textContent='Search the NSE equity directory.';return;}
+    status.textContent='Looking up companies…';
+    const current=revision;
+    delay=setTimeout(async()=>{
+      try{
+        const data=await api('stocks?q='+encodeURIComponent(query));
+        if(current!==revision||!input.isConnected)return;
+        const source={live:'NSE equity directory',cached:'Last available NSE directory',sample:'NSE unavailable · sample companies only'}[data.status];
+        status.textContent=source+' · '+(data.results.length?data.results.length+' matches shown':'No matches');
+        for(const stock of data.results){
+          const control=document.createElement('button');
+          control.type='button';
+          control.className='stock-option';
+          control.innerHTML='<span class="stock-badge">'+escape(stock.symbol.slice(0,2))+'</span><span class="stock-copy"><strong>'+escape(stock.symbol)+'</strong><small>'+escape(stock.name)+'</small></span><span class="exchange">'+escape(stock.exchange)+'</span>'+icon('arrow');
+          control.onclick=()=>{
+            input.value=stock.symbol;
+            status.textContent=stock.name+' · '+stock.exchange;
+            reset();
+            onSelect(stock,input);
+          };
+          list.append(control);
+        }
+        list.hidden=!data.results.length;
+      }catch(error){if(current===revision&&input.isConnected)status.textContent=error.message;}
+    },260);
+  });
+  input.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){reset();status.textContent='Search results closed.';}
+    if(e.key==='ArrowDown'&&!list.hidden){e.preventDefault();list.firstElementChild?.focus();}
+    if(e.key==='Enter'){e.preventDefault();list.firstElementChild?.click();}
+  });
+  list.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){reset();input.focus();return;}
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      const next=e.key==='ArrowDown'?e.target.nextElementSibling:e.target.previousElementSibling??input;
+      next?.focus();
+    }
+  });
+  return {input,reset,status};
 }
 function auth(){
   nav.hidden=true; logout.hidden=true;
@@ -86,19 +160,48 @@ function portfolio(){
   const stock=symbol=>state.catalog.find(s=>s.symbol===symbol);
   const sectors=[...new Set(state.holdings.map(h=>stock(h.symbol)?.sector).filter(Boolean))];
   const total=state.holdings.reduce((sum,h)=>sum+h.quantity*h.average,0);
+  const allocation=new Map();
+  for(const h of state.holdings){
+    const sector=stock(h.symbol)?.sector??'Unclassified';
+    allocation.set(sector,(allocation.get(sector)??0)+h.quantity*h.average);
+  }
+  const allocationRows=[...allocation].filter(([,cost])=>cost>0).sort((a,b)=>b[1]-a[1]).map(([sector,cost])=>{
+    const share=100*cost/total;
+    return '<div class="allocation-row"><div class="row-head"><small>'+escape(sector)+'</small><strong>'+format(share,'%')+'</strong></div><meter min="0" max="100" value="'+share+'" aria-label="'+escape(sector)+' share of cost basis">'+format(share,'%')+'</meter></div>';
+  }).join('');
   main.innerHTML=hero('02 / Monitor','Your portfolio','Edit holdings, track exposure at cost, or import a new holdings list.')+
     '<div class="metrics">'+metric('Holdings',state.holdings.length)+metric('Known sectors',sectors.length)+metric('Total cost basis',money.format(total))+'</div>'+
-    panel('Holdings','<div class="table-wrap"><table><thead><tr><th>Company</th><th>Sector</th><th>Demo size band</th><th>Qty</th><th>Avg. cost</th><th></th></tr></thead><tbody>'+state.holdings.map(h=>'<tr><td>'+button(escape(h.symbol),'data-research="'+escape(h.symbol)+'"')+'</td><td>'+escape(stock(h.symbol)?.sector??'—')+'</td><td>'+escape(stock(h.symbol)?.cap??'—')+'</td><td>'+format(h.quantity)+'</td><td>'+money.format(h.average)+'</td><td>'+button('Edit','data-edit="'+escape(h.symbol)+'"')+'</td></tr>').join('')+'</tbody></table></div>')+
-    '<div class="grid">'+panel('Add or edit holding','<form id="holding"><div class="fields"><label>Symbol<input name="symbol" maxlength="24" required placeholder="e.g. INFY"></label><label>Quantity<input name="quantity" type="number" min="0.000001" step="any" required></label><label>Average cost (₹)<input name="average" type="number" min="0" step="any" required></label></div><div class="actions"><button class="primary">Save holding</button>'+button('Remove selected','id="remove-holding"')+'</div></form>')+
-    panel('Import holdings','<form id="import"><p class="muted">Import replaces the holdings in this account. Use NSE symbols and INR average cost.</p><label>Holdings CSV<input type="file" accept=".csv,text/csv" required></label><div class="actions"><button class="primary">Replace holdings</button><a href="/sample-holdings.csv" download>Sample CSV</a></div></form>')+'</div>';
+    '<div class="grid">'+panel('Add or edit holding','<form id="holding">'+stockPicker('holding-search')+'<div class="fields"><label>Quantity<input name="quantity" type="number" min="0.000001" step="any" required></label><label>Average cost (₹)<input name="average" type="number" min="0" step="any" required></label><label>Purchase date<input name="purchaseDate" type="date" min="1900-01-01"></label></div><div class="actions"><button class="primary">'+icon('plus')+' Save holding</button>'+button('Remove selected','id="remove-holding" hidden')+'</div></form>')+
+    panel('Import holdings','<form id="import"><p class="muted">Replace your holdings with an NSE portfolio CSV. The purchase_date column is optional.</p><label>Holdings CSV<input type="file" accept=".csv,text/csv" required></label><div class="actions"><button class="primary">Replace holdings</button><a href="/sample-holdings.csv" download>Sample CSV</a></div></form>')+'</div>'+
+    panel('Allocation at cost','<div class="allocation">'+(allocationRows||'<p class="muted">Add holdings with a purchase cost to see sector allocation.</p>')+'</div>')+
+    panel('Holdings','<div class="table-wrap"><table><thead><tr><th>Company</th><th>Sector</th><th>Demo size band</th><th>Qty</th><th>Avg. cost</th><th>Purchased</th><th></th></tr></thead><tbody>'+state.holdings.map(h=>'<tr><td>'+button(escape(h.symbol),'data-research="'+escape(h.symbol)+'"')+'<small class="holding-name">'+escape(h.name??stock(h.symbol)?.name??'')+'</small></td><td>'+escape(stock(h.symbol)?.sector??'—')+'</td><td>'+escape(stock(h.symbol)?.cap??'—')+'</td><td>'+format(h.quantity)+'</td><td>'+money.format(h.average)+'</td><td>'+escape(h.purchaseDate??'—')+'</td><td>'+button('Edit','data-edit="'+escape(h.symbol)+'"')+'</td></tr>').join('')+'</tbody></table></div>');
   const form=document.querySelector('#holding');
+  const remove=document.querySelector('#remove-holding');
+  let selected;
+  form.elements.purchaseDate.max=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date());
+  function selectHolding(company){
+    selected=company;
+    const h=state.holdings.find(h=>h.symbol===company.symbol);
+    for(const key of ['quantity','average','purchaseDate'])form.elements[key].value=h?.[key]??'';
+    form.elements.purchaseDate.required=!h;
+    remove.hidden=!h;
+    form.elements.quantity.focus();
+  }
+  const picker=bindPicker('holding-search',selectHolding,()=>{selected=null;remove.hidden=true;});
   main.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{
     const h=state.holdings.find(h=>h.symbol===b.dataset.edit);
-    for(const key of ['symbol','quantity','average'])form.elements[key].value=h[key];
-    form.elements.quantity.focus();
+    picker.reset();
+    picker.input.value=h.symbol;
+    picker.status.textContent=(h.name??stock(h.symbol)?.name??h.symbol)+' · NSE';
+    selectHolding({symbol:h.symbol,name:h.name??stock(h.symbol)?.name});
   });
-  form.onsubmit=e=>{e.preventDefault();act(e.submitter,async()=>{Object.assign(state,await api('holding',Object.fromEntries(new FormData(form))));render();notify('Holding saved.');});};
-  document.querySelector('#remove-holding').onclick=e=>act(e.target,async()=>{Object.assign(state,await api('holding',{symbol:form.elements.symbol.value,remove:true}));render();notify('Holding removed.');});
+  form.onsubmit=e=>{
+    e.preventDefault();
+    if(!selected){notify('Choose a company from the search results.');picker.input.focus();return;}
+    const payload={...Object.fromEntries(new FormData(form)),symbol:selected.symbol,name:selected.name};
+    act(e.submitter,async()=>{Object.assign(state,await api('holding',payload));render();notify('Holding saved.');});
+  };
+  remove.onclick=e=>act(e.target,async()=>{if(!selected)return;Object.assign(state,await api('holding',{symbol:selected.symbol,remove:true}));render();notify('Holding removed.');});
   document.querySelector('#import').onsubmit=e=>{
     e.preventDefault();const file=e.target.querySelector('input').files[0];
     if(!file||file.size>125000){notify('Choose a CSV smaller than 125 KB.');return;}
@@ -122,14 +225,10 @@ function reportHTML(r){
 function research(id){
   const sectors=[...new Set(state.catalog.map(s=>s.sector))].sort();
   main.innerHTML=hero('03 / Pull','Research desk','Look up an NSE company, compare performance, and save a report you can recheck later.')+
-    '<div class="grid">'+panel('Company search','<form id="research"><label>Company name or NSE ticker<input name="symbol" list="companies" placeholder="e.g. Infosys or INFY" maxlength="80" value="'+escape(report?.symbol??'')+'" required></label><datalist id="companies">'+state.catalog.map(s=>'<option value="'+escape(s.symbol)+'">'+escape(s.name)+'</option>').join('')+'</datalist><p class="muted">Any valid NSE symbol. Data coverage varies by issuer.</p><button class="primary">Run research</button></form><p class="eyebrow">Demo tickers</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
+    '<div class="grid">'+panel('Company search',stockPicker('research-search')+'<p class="muted">Choose a result to run live research. Data coverage varies by issuer.</p><p class="eyebrow">Quick picks · '+(state.mode==='demo'?'Sample':'Live')+'</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
     panel('Sector leaders','<form id="sector"><div class="fields"><label>Sector<select name="name">'+sectors.map(s=>'<option>'+escape(s)+'</option>').join('')+'</select></label><label>Window<select name="days"><option value="21">21 sessions</option><option value="63" selected>63 sessions</option><option value="252">252 sessions</option></select></label></div><button>Rank tracked stocks</button></form><div id="leaders"></div>')+'</div>'+
     '<section class="panel" id="report" '+(report?'':'hidden')+'>'+ (report?reportHTML(report)+ '<div class="actions">'+button('Save report','id="save"','primary')+button(state.watch.includes(report.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(report.symbol)+'"')+'</div>':'')+'</section>';
-  document.querySelector('#research').onsubmit=e=>{
-    e.preventDefault();const value=e.target.elements.symbol.value.trim();
-    const symbol=state.catalog.find(s=>s.name.toLowerCase()===value.toLowerCase())?.symbol??value;
-    void runResearch(symbol,e.submitter);
-  };
+  bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
   document.querySelector('#sector').onsubmit=e=>{
     e.preventDefault();const params=new URLSearchParams(new FormData(e.target));
     act(e.submitter,async()=>{
@@ -149,15 +248,24 @@ function research(id){
     notify('Report saved.');
   });
 }
-async function runResearch(symbol,control){
+async function runResearch(symbol,control,live=false){
   if(!state)return;
   if(section()!=='research'){location.hash='research';}
   const current=state;
+  const request=++researchSequence;
+  const pickerStatus=live?document.querySelector('#research-search-status'):null;
+  if(pickerStatus)pickerStatus.textContent='Fetching live research for '+symbol+'…';
   await act(control,async()=>{
     notify('Researching '+symbol.toUpperCase()+'…');
-    const result=await api('research',{symbol});
-    if(state!==current||section()!=='research')return;
-    report=result;render();document.querySelector('#report')?.scrollIntoView({block:'start'});notify('Research ready.');
+    try{
+      const result=await api('research',{symbol,...(live?{live:true}:{})});
+      if(request!==researchSequence||state!==current||section()!=='research')return;
+      report=result;render();document.querySelector('#report')?.scrollIntoView({block:'start'});notify('Research ready.');
+    }catch(error){
+      if(request!==researchSequence)return;
+      if(pickerStatus?.isConnected)pickerStatus.textContent=error.message;
+      throw error;
+    }
   });
 }
 function saved(){

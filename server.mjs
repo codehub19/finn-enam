@@ -5,8 +5,8 @@ import {fileURLToPath} from 'node:url';
 import {randomBytes,randomUUID,scrypt,timingSafeEqual,createHash} from 'node:crypto';
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
-import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST} from './data.mjs';
-import {filings,quote,research,reportDiff,statements} from './providers.mjs';
+import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
+import {filings,quote,research,reportDiff,statements,searchEquities} from './providers.mjs';
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
 const path=resolve(process.env.FINN_DB||resolve(root,'finn.sqlite'));
@@ -175,6 +175,12 @@ async function route(req,res){
     return current;
   };
   if(method==='GET'){
+    if(p==='/api/stocks'){
+      limit('stocks:'+user.id,90,60000);
+      const query=(url.searchParams.get('q')??'').trim();
+      if(!query||query.length>100) throw fail(400,'Enter a company name, NSE ticker, or ISIN.');
+      return json(res,200,await searchEquities(query));
+    }
     if(p==='/api/state') return json(res,200,{email:user.email,...data,catalog,categories,push:{enabled:pushReady(),publicKey:pushReady()?process.env.VAPID_PUBLIC_KEY:null,reason:!push?'HTTPS and VAPID setup required.':!calendarCurrent()?'A verified calendar for the current NSE trading year is required.':null}});
     if(p==='/api/digest'){
       const hours=Number(url.searchParams.get('hours')??24);
@@ -213,7 +219,11 @@ async function route(req,res){
         if(input.remove===true){d.holdings=prior;return;}
         const quantity=Number(input.quantity),average=Number(input.average);
         if(!(quantity>0)||!Number.isFinite(quantity)||!Number.isFinite(average)||average<0||prior.length>=100) throw fail(400,'Use a positive quantity and a non-negative average cost.');
-        d.holdings=[...prior,{symbol,quantity,average}];
+        const existing=d.holdings.find(h=>h.symbol===symbol);
+        const purchaseDate=input.purchaseDate??existing?.purchaseDate;
+        if(purchaseDate&&!validPurchaseDate(purchaseDate)) throw fail(400,'Enter a valid purchase date no later than today.');
+        const name=typeof input.name==='string'?input.name.trim().slice(0,160):existing?.name;
+        d.holdings=[...prior,{symbol,quantity,average,...(purchaseDate?{purchaseDate}:{}),...(name?{name}:{})}];
       }));
     }
     if(p==='/api/watch'){
@@ -225,7 +235,7 @@ async function route(req,res){
     }
     if(p==='/api/research'){
       limit('research:'+user.id,16,600000);
-      const symbol=symbolOf(input.symbol), report=await research(symbol,data.mode);
+      const symbol=symbolOf(input.symbol), report=await research(symbol,input.live===true?'live':data.mode);
       const draftId=randomUUID();
       db.prepare('DELETE FROM drafts WHERE expires<=?').run(Date.now());
       db.prepare('INSERT INTO drafts VALUES(?,?,?,?)').run(draftId,user.id,Date.now()+3600000,JSON.stringify(report));

@@ -22,6 +22,47 @@ async function get(url, headers={}, options={}) {
   if(!res.ok) throw Error('Provider returned HTTP '+res.status);
   return res;
 }
+const equityDirectory='https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv';
+let lastDirectory, directoryRetryAt=0;
+export function parseEquityDirectory(csv) {
+  const rows=csv.replace(/^\uFEFF/,'').trim().split(/\r?\n/).map(line=>
+    [...line.matchAll(/(?:^|,)\s*("(?:[^"]|"")*"|[^,]*)/g)]
+      .map(([,cell])=>cell.trim().replace(/^"(.*)"$/,'$1').replaceAll('""','"')));
+  const header=rows.shift()??[];
+  const symbol=header.indexOf('SYMBOL'), name=header.indexOf('NAME OF COMPANY'), isin=header.indexOf('ISIN NUMBER');
+  if([symbol,name,isin].includes(-1)) throw Error('Invalid NSE directory response');
+  return [...new Map(rows.filter(row=>/^[A-Z0-9&-]{1,24}$/.test(row[symbol]??'')&&row[name])
+    .map(row=>[row[symbol],{symbol:row[symbol],name:row[name],isin:row[isin],exchange:'NSE'}])).values()];
+}
+export async function searchEquities(query) {
+  let rows, status='live';
+  try {
+    if(Date.now()<directoryRetryAt) throw Error('NSE directory retry is pending');
+    rows=await cached('nse-equities',86400000,async()=>{
+      const response=await get(equityDirectory);
+      const listed=parseEquityDirectory(await response.text());
+      if(!listed.length) throw Error('Empty NSE equity directory');
+      lastDirectory=listed;
+      return listed;
+    });
+  }catch{
+    if(Date.now()>=directoryRetryAt) directoryRetryAt=Date.now()+45000;
+    status=lastDirectory?'cached':'sample';
+    rows=lastDirectory??catalog.map(stock=>({...stock,exchange:'NSE'}));
+  }
+  const q=query.trim().toUpperCase();
+  const rank=stock=>{
+    const name=stock.name.toUpperCase();
+    if(stock.symbol===q||stock.isin===q) return 0;
+    if(stock.symbol.startsWith(q)) return 1;
+    if(name.startsWith(q)) return 2;
+    if(name.includes(q)||stock.symbol.includes(q)) return 3;
+    return 4;
+  };
+  const results=rows.map(stock=>({stock,rank:rank(stock)})).filter(item=>item.rank<4)
+    .sort((a,b)=>a.rank-b.rank||a.stock.symbol.localeCompare(b.stock.symbol)).slice(0,10).map(item=>item.stock);
+  return {results,status,source:equityDirectory};
+}
 const priorDate=(days)=>new Date(Date.now()-days*86400000);
 const keyDate=(day)=>day.split('-').reverse().join('-');
 const nseHeaders={'User-Agent':'Mozilla/5.0','Referer':exchangePage,'Accept':'application/json'};

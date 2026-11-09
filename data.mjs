@@ -64,17 +64,26 @@ export function demoBars(symbol, now=Date.now()) {
 export function csvHoldings(csv) {
   const lines=String(csv).replace(/^\uFEFF/,'').trim().split(/\r?\n/).filter(s=>s.trim());
   const fields=line=>line.split(',').map(s=>s.trim().replace(/^"([^"]*)"$/,'$1'));
-  if(fields(lines.shift()??'').map(s=>s.toLowerCase()).join(',')!=='symbol,quantity,average_cost') throw Error('Use symbol,quantity,average_cost as the header.');
+  const header=fields(lines.shift()??'').map(s=>s.toLowerCase()).join(',');
+  const hasDate=header==='symbol,quantity,average_cost,purchase_date';
+  if(!hasDate&&header!=='symbol,quantity,average_cost') throw Error('Use symbol,quantity,average_cost with an optional purchase_date column.');
   if(!lines.length || lines.length>100) throw Error('Import between 1 and 100 holdings.');
   const seen=new Set();
   return lines.map((line,i)=>{
     const cells=fields(line), symbol=cells[0]?.toUpperCase(), quantity=Number(cells[1]), average=Number(cells[2]);
-    if(cells.length!==3 || !/^[A-Z0-9&-]{1,24}$/.test(symbol) || !cells[2] || !(quantity>0) || !Number.isFinite(quantity) || !Number.isFinite(average) || average<0 || seen.has(symbol)) throw Error('Invalid or duplicate holding on line '+(i+2));
+    if(cells.length!==(hasDate?4:3) || !/^[A-Z0-9&-]{1,24}$/.test(symbol) || !cells[2] || !(quantity>0) || !Number.isFinite(quantity) || !Number.isFinite(average) || average<0 || seen.has(symbol)) throw Error('Invalid or duplicate holding on line '+(i+2));
     seen.add(symbol);
-    return {symbol,quantity,average};
+    const purchaseDate=cells[3];
+    if(purchaseDate&&!validPurchaseDate(purchaseDate)) throw Error('Invalid purchase date on line '+(i+2)+'. Use YYYY-MM-DD and a date no later than today.');
+    return {symbol,quantity,average,...(purchaseDate?{purchaseDate}:{})};
   });
 }
 export const dateIST=(value=new Date())=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(value);
+export function validPurchaseDate(value) {
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value<'1900-01-01'||value>dateIST()) return false;
+  const parsed=new Date(value+'T00:00:00Z');
+  return Number.isFinite(parsed.valueOf())&&parsed.toISOString().slice(0,10)===value;
+}
 export function briefingSlot(now,calendar){
   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',weekday:'short',hourCycle:'h23'}).formatToParts(now).map(p=>[p.type,p.value]));
   const day=dateIST(now), minute=Number(parts.hour)*60+Number(parts.minute);

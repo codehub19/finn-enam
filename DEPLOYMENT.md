@@ -24,7 +24,7 @@ For a direct Node deployment, run `npm ci`, install `poppler-utils` with the hos
 
 - Use **Run live briefing** and check the reported quote coverage. Allow outbound HTTPS and observe NSE and Yahoo availability. The public web endpoints have no availability or completeness guarantee.
 - Set `SEC_USER_AGENT` to an application name and a real contact email for supported XBRL fundamentals.
-- Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL` for qualitative research. The app sends document excerpts and a ticker, with no holdings or login credentials.
+- Set `GEMINI_API_KEY` and optionally `GEMINI_MODEL` for qualitative research. The app sends document excerpts and a ticker, with no holdings or login credentials.
 - Check that `pdftotext -v` works on the host, or set `PDFTOTEXT` to the executable path. An alternative is to install `pypdf` into a Python environment and set `PDF_PYTHON` to that interpreter.
 
 ## Enable Web Push

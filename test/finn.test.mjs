@@ -5,10 +5,40 @@ import {once} from 'node:events';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {deflateRawSync} from 'node:zlib';
 import {metrics,briefingSlot,csvHoldings,classify,fundamentals} from '../data.mjs';
 import {reportDiff,parseEquityDirectory} from '../providers.mjs';
 import {parseNseQuarterly,quarterlyComparison,reportInsights} from '../insights.mjs';
 import {guidanceScorecard} from '../guidance.mjs';
+import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief} from '../gemini.mjs';
+import {parseAnnouncementRss,parseDailyReport} from '../exchange.mjs';
+test('Gemini uses the server-side header and returns only public answer text',async()=>{
+ const payload=geminiPayload('INFY',[{citation:1,type:'Annual report',evidence:'Primary evidence.'}]);
+ const request=async (url,options)=>{
+  assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/models/'+DEFAULT_GEMINI_MODEL+':generateContent');
+  assert.equal(options.headers['x-goog-api-key'],'fixture-key');
+  assert.deepEqual(JSON.parse(options.body),payload);
+  return new Response(JSON.stringify({candidates:[{finishReason:'STOP',content:{parts:[{text:'Private reasoning',thought:true},{text:'Company evidence [1].'}]}}]}));
+ };
+ assert.equal(await generateGeminiBrief({key:'fixture-key',payload,request}),'Company evidence [1].');
+ await assert.rejects(generateGeminiBrief({key:'fixture-key',payload,request:async()=>new Response('',{status:429})}),/quota or rate limit/);
+});
+test('NSE fallback parses a reported close and matches RSS entries by company name',()=>{
+ const data=deflateRawSync('TradDt,FinInstrmTp,TckrSymb,SctySrs,ClsPric,PrvsClsgPric,TtlTradgVol\n2026-11-09,STK,INFY,EQ,110,100,4500\n');
+ const header=Buffer.alloc(30);
+ header.writeUInt32LE(0x04034b50);
+ header.writeUInt16LE(8,8);
+ header.writeUInt32LE(data.length,18);
+ const quote=parseDailyReport(Buffer.concat([header,data]),'2026-11-09').get('INFY');
+ assert.equal(quote.close,110);
+ assert.equal(quote.tradedVolume,4500);
+ assert.ok(Math.abs(quote.day-10)<1e-8);
+ const xml='<rss><item><title>Infosys Limited</title><description>Revenue update |SUBJECT: Financial results</description><pubDate>fixture</pubDate></item><item><title>Other issuer</title><pubDate>fixture</pubDate></item></rss>';
+ const rows=parseAnnouncementRss(xml,[{symbol:'INFY',name:'Infosys Limited'}],()=>1000,classify,'https://www.nseindia.com/');
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].symbol,'INFY');
+ assert.equal(rows[0].category,'Results');
+});
 test('Infosys guidance uses matching fiscal-year actuals and keeps open outcomes pending',()=>{
  const score=guidanceScorecard('INFY');
  assert.equal(score.rows.length,4);

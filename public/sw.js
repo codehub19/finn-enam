@@ -1,4 +1,4 @@
-const cacheName='finn-shell-4';
+const cacheName='finn-shell-5';
 const shell=['/','/app.js','/styles.css','/icon.svg','/icon-192.png','/icon-512.png','/manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(cacheName).then(cache=>cache.addAll(shell)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('finn-shell-')&&k!==cacheName).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

@@ -73,12 +73,12 @@ async function mapLimit(list, concurrency, fn){
   }));
   return result;
 }
-async function digest(data,hours,refresh=false){
+async function digest(data,hours,refresh=false,rssOnly=false){
   const held=new Set(data.holdings.map(h=>h.symbol));
   const watched=new Set(data.watch);
   const sectors=new Set(catalog.filter(s=>held.has(s.symbol)).map(s=>s.sector));
   const related=new Set(catalog.filter(s=>!held.has(s.symbol)&&sectors.has(s.sector)).map(s=>s.symbol));
-  const {rows,...feed}=await filings(hours,data.mode,refresh);
+  const {rows,...feed}=await filings(hours,data.mode,refresh,rssOnly);
   const ranked=rows.map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
     .sort((a,b)=>Number(b.alert)-Number(a.alert)||Number(a.category==='Routine')-Number(b.category==='Routine')||b.timestamp-a.timestamp);
   return {...feed,checkedAt:new Date().toISOString(),owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
@@ -100,7 +100,7 @@ async function scan(data,todayOnly=false,refresh=false){
     return {...row,reasons,ratios,flags,fundamentalSource:annual?.source};
   });
   const priced=results.filter(r=>r.date&&(!todayOnly||r.date===dateIST()));
-  return {alerts:checks,coverage:priced.length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
+  return {alerts:checks,coverage:priced.length,archiveCoverage:priced.filter(row=>row.fallback).length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',
@@ -201,9 +201,10 @@ async function route(req,res){
     }
     if(p==='/api/filing-detail'){
       limit('filing-detail:'+user.id,25,600000);
-      const feed=await digest({...data,mode:'live'},168);
+      const filingId=url.searchParams.get('id');
+      const feed=await digest({...data,mode:'live'},168,false,filingId?.startsWith('rss|'));
       if(feed.error)throw fail(503,'NSE filings are temporarily unavailable.');
-      const row=[...feed.owned,...feed.related,...feed.watch].find(f=>f.id===url.searchParams.get('id'));
+      const row=[...feed.owned,...feed.related,...feed.watch].find(f=>f.id===filingId);
       if(!row)throw fail(404,'This filing is outside your current briefing.');
       return json(res,200,await filingInsight(row));
     }

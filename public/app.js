@@ -158,6 +158,7 @@ function briefing(id){
       if(data.error){filings.innerHTML='<p class="error">NSE filings are unavailable right now. Try running the briefing again.</p>';return;}
       const important=data.owned.filter(r=>r.category!=='Routine'), routine=data.owned.filter(r=>r.category==='Routine');
       filings.innerHTML='<p class="muted">'+data.owned.length+' filings · '+data.owned.filter(r=>r.alert).length+' selected alerts · Checked '+escape(when(data.checkedAt))+'</p>'+
+        (data.coverageNote?'<p class="coverage-note"><strong>'+escape(data.scope)+'</strong><br>'+escape(data.coverageNote)+'</p>':'')+
         (important.map(article).join('')||'<p class="muted">No material portfolio filings in this window. You can widen the lookback above.</p>')+
         (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(article).join('')+'</details>':'');
       const peers=data.related.filter(row=>!data.watch.some(item=>item.id===row.id));
@@ -171,7 +172,9 @@ function briefing(id){
     try{
       const scan=await api('scan?live=1'+(refresh?'&refresh=1':''));
       if(id!==generation)return;
-      moves.innerHTML='<p class="muted">'+scan.coverage+' of '+scan.total+' holdings priced'+(scan.asOf?' · Latest session '+escape(scan.asOf):'')+'.</p>'+(scan.alerts.map(a=>'<article class="row"><h3>'+escape(a.symbol)+'</h3><p>'+format(a.day,'%')+' · '+format(a.volume,'×')+' · '+escape(a.date)+'</p><p>'+escape(a.reasons.join(' · '))+'</p><p class="muted">'+escape(a.ratios?a.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(a.fundamentalSource,'Annual filing ↗')+'</p>'+button('Research','data-research="'+escape(a.symbol)+'" data-live="1"')+'</article>').join('')||'<p class="muted">'+(scan.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
+      moves.innerHTML='<p class="muted">'+scan.coverage+' of '+scan.total+' holdings priced'+(scan.asOf?' · Latest session '+escape(scan.asOf):'')+'.</p>'+
+        (scan.archiveCoverage?'<p class="coverage-note">'+scan.archiveCoverage+' from NSE daily reports. These use reported closes and have no 20-session volume comparison.</p>':'')+
+        (scan.alerts.map(a=>'<article class="row"><h3>'+escape(a.symbol)+'</h3><p>'+format(a.day,'%')+(a.fallback?' reported close move':' · '+format(a.volume,'×'))+' · '+escape(a.date)+'</p><p>'+escape(a.reasons.join(' · '))+'</p><p class="muted">'+escape(a.ratios?a.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(a.fundamentalSource,'Annual filing ↗')+'</p>'+button('Research','data-research="'+escape(a.symbol)+'" data-live="1"')+'</article>').join('')||'<p class="muted">'+(scan.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
     }catch(error){moves.textContent=error.message;}
   }
   windowSelect.onchange=e=>{hours=Number(e.target.value);void loadFilings(false);};
@@ -266,13 +269,14 @@ function reportHTML(r){
   const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   return '<div class="row-head"><h2>'+escape(r.symbol)+' research</h2>'+tag(r.mode==='demo'?'Sample prices':'Live research')+'</div>'+
-    (r.narrative?'<div class="research-summary"><h3>Research brief</h3><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
+    (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Gemini Flash'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
     (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'')+
     guidanceHTML(r.guidance)+
     (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
-    '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,'Price history ↗')+'</p>'+
+    '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
-    '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric('Daily adjusted return',format(r.price.day,'%'))+metric('Volume / 20-session mean',format(r.price.volume,'×'))+'</div>'+
+    (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+
+    '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',format(r.price.fallback?r.price.tradedVolume:r.price.volume,r.price.fallback?'':'×'))+'</div>'+
     (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
     '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>'+
     trends+'<details class="report-sources"><summary>Sources and coverage</summary><p class="muted">'+escape(r.aiStatus)+'</p>'+

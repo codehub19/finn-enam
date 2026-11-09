@@ -124,3 +124,32 @@ nav{backdrop-filter:blur(14px)}
 #research-progress,#report{scroll-margin-top:88px}
 .filing-detail:not(:empty){margin:.7rem 0;padding:.6rem .75rem;border-left:2px solid var(--strong-line);background:var(--inset)}
 @media(min-width:650px){.insights{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Shared type scale and restrained motion across the workspace. */
+:root{--type-body:1rem;--type-small:.875rem;--type-label:.8125rem;--type-section:1.125rem;--type-page:clamp(1.65rem,3.5vw,2.15rem);--motion-fast:150ms;--motion-enter:210ms}
+body{font-size:var(--type-body);line-height:1.55}
+h1,.page-heading h1,.hero h1{font-size:var(--type-page);line-height:1.16;letter-spacing:-.045em;font-weight:740}
+h2{font-size:var(--type-section);line-height:1.35}
+h3,.insight h3,.research-summary h3{font-size:var(--type-body);line-height:1.4}
+small,.picker-status,.loading p,.allocation-row strong{font-size:var(--type-small)}
+.eyebrow,.tag,.exchange,th{font-size:var(--type-label);letter-spacing:.055em}
+.brand span{font-size:var(--type-label);letter-spacing:.085em}
+nav a{font-size:.75rem}
+@media(min-width:960px){nav a{font-size:var(--type-small)}}
+.page-heading{padding:.3rem 0 .85rem;border-bottom:1px solid var(--line)}
+.page-heading h1{margin-bottom:.36rem}
+.panel,.metric{box-shadow:0 1px 0 var(--line)}
+.panel>h2{margin-bottom:.9rem}
+button,.button,nav a{transition:background var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast),transform var(--motion-fast)}
+@media(hover:hover) and (prefers-reduced-motion:no-preference){
+  button:not(:disabled):hover,.button:hover{transform:translateY(-1px)}
+  button:not(:disabled):active,.button:active{transform:translateY(0)}
+}
+@media(prefers-reduced-motion:no-preference){
+  main>.page-heading,main>.grid,main>.panel,main>.auth,main>.metrics,.stock-results:not([hidden]){animation:appear var(--motion-enter) ease-out both}
+  main>.grid{animation-delay:35ms}
+}
+@keyframes appear{from{opacity:.72;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.coverage-note{margin:.7rem 0;padding:.7rem .85rem;background:var(--inset);border-left:2px solid var(--accent);border-radius:6px;color:var(--sub);font-size:var(--type-small)}
+.research-summary{border-color:var(--strong-line);background:linear-gradient(120deg,var(--glint),transparent 55%),var(--inset)}
+.research-summary .row-head{margin-bottom:.4rem}
+.research-summary h3{margin:0}

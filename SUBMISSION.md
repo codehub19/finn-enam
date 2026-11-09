@@ -28,10 +28,10 @@ Replace `YOUR_GITHUB_USERNAME` before running the command. Complete GitHub sign-
 | NSE_CALENDAR | /app/config/nse-2026.json |
 | PUBLIC_ORIGIN | The exact HTTPS origin shown by Render. Set after the URL is assigned. |
 | SEC_USER_AGENT | FINN research followed by your contact email, for optional SEC structured facts |
-| OPENAI_API_KEY | Your project API key, only if you want the optional AI synthesis |
-| OPENAI_MODEL | A Responses API model available to your project. Set this explicitly if you enable synthesis. |
+| GEMINI_API_KEY | Your project API key, only if you want the optional AI synthesis |
+| GEMINI_MODEL | gemini-3.8-flash (default). Override if your project uses another supported Gemini Flash model. |
 
-Keep keys in the host's environment settings. FINN reads live market data and produces source highlights without an OpenAI key. The container includes Poppler for PDF extraction. Refresh the bundled NSE calendar when the exchange publishes updates or a new trading year begins. [Render web-service setup](https://render.com/docs/web-services) · [Render persistent disks](https://render.com/docs/disks)
+Keep keys in the host's environment settings. FINN reads live market data and produces source highlights without a Gemini API key. The container includes Poppler for PDF extraction. Refresh the bundled NSE calendar when the exchange publishes updates or a new trading year begins. [Render web-service setup](https://render.com/docs/web-services) · [Render persistent disks](https://render.com/docs/disks)
 
 ## 3. Verify notifications and the demo
 

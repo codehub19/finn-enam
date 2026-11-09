@@ -1,6 +1,7 @@
 .git
 .openai
 .env
+.env.*
 *.sqlite*
 node_modules
 test

@@ -132,6 +132,10 @@ function validateSubscription(value){
 }
 async function route(req,res){
   const url=new URL(req.url,'http://localhost'), p=url.pathname, method=req.method;
+  if(method==='GET'&&p==='/healthz'){
+    db.prepare('SELECT 1').get();
+    return json(res,200,{status:'ok'});
+  }
   if(publicFiles[p]&&method==='GET'){
     const name=publicFiles[p], content=await readFile(resolve(root,'public',name));
     res.writeHead(200,{'Content-Type':mime[name.split('.').at(-1)],'Cache-Control':'no-cache'}); return res.end(content);
@@ -275,6 +279,18 @@ async function route(req,res){
       const next=await research(saved.symbol,saved.mode,true);
       return json(res,200,{next,diff:reportDiff(saved,next)});
     }
+    if(p==='/api/subscription/test'){
+      if(!pushReady())throw fail(503,'Server push is not configured.');
+      limit('test-push:'+user.id,5,600000);
+      const sub=db.prepare('SELECT * FROM subscriptions WHERE owner=? AND endpoint=?').get(user.id,String(input.endpoint??''));
+      if(!sub)throw fail(404,'Enable notifications on this device first.');
+      try{await sendPush(sub,'FINN · Test notification','This device can receive FINN briefings.');}
+      catch(error){
+        if([404,410].includes(error.statusCode))db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(sub.endpoint,user.id);
+        throw fail(502,'The push service rejected this test. Reconnect notifications and try again.');
+      }
+      return json(res,200,{accepted:true});
+    }
     if(p==='/api/subscription'){
       if(input.remove===true){
         db.prepare('DELETE FROM subscriptions WHERE owner=? AND endpoint=?').run(user.id,String(input.endpoint??''));
@@ -288,11 +304,14 @@ async function route(req,res){
   }
   throw fail(404,'Action not found.');
 }
+function sendPush(subscription,title,message){
+  return push.sendNotification(JSON.parse(subscription.data),JSON.stringify({title,body:message,url:'/#briefing'}),{TTL:900,timeout:9000});
+}
 async function deliver(subscription,event,title,message){
   const claimed=db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run(subscription.endpoint,event,Date.now());
   if(!claimed.changes) return;
   try{
-    await push.sendNotification(JSON.parse(subscription.data),JSON.stringify({title,body:message,url:'/#briefing'}),{TTL:900,timeout:9000});
+    await sendPush(subscription,title,message);
   }catch(error){
     if([404,410].includes(error.statusCode)) db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(subscription.endpoint,subscription.owner);
     else db.prepare('DELETE FROM deliveries WHERE endpoint=? AND event=?').run(subscription.endpoint,event);

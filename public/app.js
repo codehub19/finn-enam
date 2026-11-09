@@ -244,6 +244,17 @@ function quarterlyHTML(detail){
   const divisor=detail.currency==='INR'?10000000:1000000;
   return '<p class="muted">Quarter ended '+escape(q.period)+' · '+(detail.currency==='INR'?'₹ crore':'USD millions')+(detail.basis?' · '+escape(detail.basis):'')+' '+link(detail.source,'Reported facts ↗')+'</p><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Reported</th><th>QoQ</th><th>YoY</th></tr></thead><tbody>'+q.rows.map(row=>'<tr><td>'+escape(row.label)+'</td><td>'+format(row.value===null?null:row.value/divisor)+'</td><td>'+format(row.qoq,'%')+'</td><td>'+format(row.yoy,'%')+'</td></tr>').join('')+'</tbody></table></div>';
 }
+function guidanceHTML(scorecard){
+  if(!scorecard)return '';
+  const range=([low,high])=>format(low)+'–'+format(high,'%');
+  return '<div class="row"><h3>Guidance and actuals · four reporting checkpoints</h3><p>'+escape(scorecard.summary)+'</p><p class="muted">Primary-source snapshot · '+escape(scorecard.asOf)+'</p>'+
+    '<div class="table-wrap"><table><thead><tr><th>Quarter</th><th>Quarterly actuals</th><th>Full-year guidance</th><th>Full-year outcome</th></tr></thead><tbody>'+
+    scorecard.rows.map(row=>'<tr><td><strong>'+escape(row.quarter)+'</strong><br><small>'+escape(row.date)+' · '+link(row.release,'Results')+' · '+link(row.transcript,'Call')+'</small></td>'+
+      '<td>'+format(row.quarterGrowth,'%')+' CC revenue growth<br>'+format(row.quarterMargin,'%')+' operating margin'+(Number.isFinite(row.quarterAdjustedMargin)?'<br><small>'+format(row.quarterAdjustedMargin,'%')+' adjusted margin</small>':'')+'</td>'+
+      '<td>'+escape(row.period)+' · '+range(row.revenue)+' CC growth<br>'+range(row.margin)+' operating margin</td>'+
+      '<td>'+(row.final?format(row.final.revenue,'%')+' CC growth · '+escape(row.revenueOutcome)+'<br>'+format(row.final.margin,'%')+' adjusted margin · '+escape(row.marginOutcome)+'<br><small>'+format(row.final.reportedMargin,'%')+' reported margin · '+link(row.final.source,'Year-end results')+'</small>':escape(row.revenueOutcome))+'</td></tr>').join('')+
+    '</tbody></table></div><p class="muted">'+escape(scorecard.note)+' '+link(scorecard.context,'Management explanation ↗')+'</p></div>';
+}
 function reportHTML(r){
   const returns=r.price.returns;
   const inr=r.annual?.currency==='INR';
@@ -257,6 +268,7 @@ function reportHTML(r){
   return '<div class="row-head"><h2>'+escape(r.symbol)+' research</h2>'+tag(r.mode==='demo'?'Sample prices':'Live research')+'</div>'+
     (r.narrative?'<div class="research-summary"><h3>Research brief</h3><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
     (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'')+
+    guidanceHTML(r.guidance)+
     (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
@@ -331,7 +343,7 @@ function settings(){
   const check=(name,label,enabled)=>'<label class="check"><input name="'+escape(name)+'" type="checkbox" '+(enabled?'checked':'')+'>'+escape(label)+'</label>';
   main.innerHTML=hero('05 / Configure','Your settings','Choose the feed, tune what counts as unusual, and manage browser notifications.')+
     panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+check('instant','Material filings as detected and EOD threshold alerts',s.instant)+'</details><button class="primary">Save preferences</button></form>')+
-    panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
+    panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Send test notification','id="test-push" '+(!state.push.enabled?'disabled':''))+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
   document.querySelector('#prefs').onsubmit=e=>{
     e.preventDefault();const f=new FormData(e.target);
     act(e.submitter,async()=>{
@@ -353,6 +365,17 @@ function settings(){
     const reg=await navigator.serviceWorker?.getRegistration(), sub=await reg?.pushManager.getSubscription();
     if(sub){await api('subscription',{endpoint:sub.endpoint,remove:true});await sub.unsubscribe();}
     document.querySelector('#notification-status').textContent='Device notifications disabled.';
+  });
+  document.querySelector('#test-push').onclick=e=>act(e.target,async()=>{
+    const status=document.querySelector('#notification-status');
+    status.textContent='Sending a test to this device…';
+    try{
+      const reg=await navigator.serviceWorker?.getRegistration();
+      const sub=await reg?.pushManager.getSubscription();
+      if(!sub)throw Error('Enable notifications on this device first.');
+      await api('subscription/test',{endpoint:sub.endpoint});
+      status.textContent='The push service accepted the test. Check whether a FINN notification appeared on this device.';
+    }catch(error){status.textContent=error.message;}
   });
 }
 main.addEventListener('click',e=>{

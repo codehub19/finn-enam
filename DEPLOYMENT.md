@@ -1,5 +1,7 @@
 # Deploy FINN
 
+For the exact GitHub and Render steps, follow [Deploy and submit](SUBMISSION.md).
+
 Deploy one persistent Node.js process behind HTTPS. Use a host that allows outbound HTTPS to NSE, Yahoo Finance, SEC and your configured model provider. The process runs the alert poller. A host that sleeps will miss briefing windows.
 
 The Work Sites project was reserved during the build. The supplied backend uses Node's SQLite API, local PDF extraction and a persistent scheduler, so the repository targets a Node or Docker host. The Work Sites Worker runtime would require a separate port to managed storage and scheduled jobs.

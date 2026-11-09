@@ -8,6 +8,18 @@ import {join} from 'node:path';
 import {metrics,briefingSlot,csvHoldings,classify,fundamentals} from '../data.mjs';
 import {reportDiff,parseEquityDirectory} from '../providers.mjs';
 import {parseNseQuarterly,quarterlyComparison,reportInsights} from '../insights.mjs';
+import {guidanceScorecard} from '../guidance.mjs';
+test('Infosys guidance uses matching fiscal-year actuals and keeps open outcomes pending',()=>{
+ const score=guidanceScorecard('INFY');
+ assert.equal(score.rows.length,4);
+ assert.deepEqual(score.rows[0].revenue,[3,3.5]);
+ assert.equal(score.rows[0].revenueOutcome,'Within range');
+ assert.equal(score.rows[0].marginOutcome,'Within range');
+ assert.equal(score.rows[0].final.reportedMargin,20.3);
+ assert.ok(score.rows.slice(1).every(row=>row.final===null&&row.revenueOutcome==='Pending full-year results'));
+ assert.deepEqual(score.rows.at(-1).revenue,[1,2]);
+ assert.equal(guidanceScorecard('BAJFINANCE'),null);
+});
 test('reported quarterly results compare like periods and keep missing figures blank',()=>{
  const xml='<x:unit id="INR"><x:measure>iso:INR</x:measure></x:unit>'+
   '<x:context id="quarter"><x:startDate>2026-07-01</x:startDate><x:endDate>2026-09-30</x:endDate></x:context>'+
@@ -84,12 +96,16 @@ async function api(path,payload,cookie){
  return {status:res.status,data:await res.json(),cookie:res.headers.get('set-cookie')?.split(';')[0]};
 }
 test('PWA shell, private accounts, import, digest, sector rankings and saved-report recheck',async()=>{
+ const health=await fetch(url+'/healthz');
+ assert.equal(health.status,200);
+ assert.deepEqual(await health.json(),{status:'ok'});
  for(const name of ['/','/app.js','/sw.js','/manifest.webmanifest','/icon-192.png','/icon-512.png','/sample-holdings.csv']) assert.equal((await fetch(url+name)).status,200,name);
  assert.equal((await api('state')).status,401);
  const a=await api('register',{email:'one@example.test',password:'very-long-test-password'});
  const b=await api('register',{email:'two@example.test',password:'another-test-password'});
  assert.equal(a.status,200); assert.equal(b.status,200);
  const state=await api('state',null,a.cookie);
+ assert.equal((await api('subscription/test',{endpoint:'https://fcm.googleapis.com/example'},a.cookie)).status,503);
  assert.equal(state.data.holdings.length,18);
  assert.equal(state.data.push.enabled,false);
  const digest=await api('digest?hours=48',null,a.cookie);

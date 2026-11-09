@@ -5,7 +5,7 @@ export function extractEvidence(text,pattern){
   const words=match.trim().split(/\s+/);
   return words.slice(0,24).join(' ')+(words.length>24?'…':'');
 }
-export function reportInsights(docs,annual,results){
+export function reportInsights(docs,annual,results,guidance){
   const find=type=>docs.findIndex(s=>s.type===type&&s.text);
   const ar=find('Annual report'), call=find('Earnings call');
   const excerpt=(i,pattern)=>{
@@ -30,7 +30,7 @@ export function reportInsights(docs,annual,results){
     {title:'Multi-year trajectory',note:Number.isFinite(growth)?'Annual revenue '+(growth<0?'fell ':'grew ')+fmt(Math.abs(growth))+'% versus the prior comparable year.':Number.isFinite(sales?.yoy)?'Latest quarterly revenue changed '+fmt(sales.yoy)+'% against the same quarter last year. Multi-year annual facts were unavailable.':null},
     {title:'Balance sheet',note:reportedBalance??(Number.isFinite(ratios.debtToEquity)?'Reported borrowings were '+fmt(ratios.debtToEquity)+'× equity.':null),evidence:excerpt(ar,/borrowings|liquidity|working capital|debt/i)},
     {title:'Cash quality',note:reportedCash??(Number.isFinite(ratios.cashConversion)?'Operating cash flow was '+fmt(ratios.cashConversion)+'× reported profit.':null),evidence:excerpt(ar,/operating cash flow|cash from operations|free cash flow/i)},
-    {title:'Narrative vs. numbers',note:outlook&&latest?'Management’s remarks and the annual figures may cover different periods. A guidance-versus-actual comparison needs a matched metric and quarter.':'Matching guidance and reported results could not be verified from the available sources.'},
+    {title:'Narrative vs. numbers',note:guidance?.summary??(outlook&&latest?'Management’s remarks and the annual figures may cover different periods. A guidance-versus-actual comparison needs a matched metric and period.':'Matching guidance and reported results could not be verified from the available sources.')},
     {title:'Management outlook',evidence:outlook},
     {title:'Bull and bear evidence',note:Number.isFinite(growth)?'Reported revenue '+(growth<0?'decline is a cautionary signal.':'growth is one piece of supportive evidence.'):null,evidence:risk}
   ];

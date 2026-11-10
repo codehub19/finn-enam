@@ -28,6 +28,7 @@ test('global news only surfaces dated official links and labels a wider lookback
 });
 test('Gemini uses the server-side header and returns only public answer text',async()=>{
  const payload=geminiPayload('INFY',[{citation:1,type:'Annual report',evidence:'Primary evidence.'}]);
+ assert.equal(payload.generationConfig.responseSchema.items.properties.citations.items.type,'INTEGER');
  const request=async (url,options)=>{
   assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/models/'+DEFAULT_GEMINI_MODEL+':generateContent');
   assert.equal(options.headers['x-goog-api-key'],'fixture-key');
@@ -42,7 +43,7 @@ test('research preserves the requested sections and drops model text with unknow
  assert.deepEqual(topics,['Business snapshot','Financial snapshot','Trajectory','Balance sheet','Cash quality','Narrative vs. numbers','Guidance','Bull vs. bear']);
  const output=[
   {title:'Guidance',text:'Unverified guidance.',citations:[2]},
-  {title:'Cash quality',text:'Reported cash flow.',citations:[1,1]},
+  {title:'Cash quality',text:'Reported cash flow.',citations:[1,'1']},
   {title:'Business snapshot',text:'Reported business model.',citations:[1]}
  ];
  assert.deepEqual(parseGeminiSections(JSON.stringify(output),[{citation:1}]),[

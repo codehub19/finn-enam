@@ -35,3 +35,15 @@ For a direct Node deployment, run `npm ci`, install `poppler-utils` with the hos
 4. Regular-session windows open at 08:55 and 16:00 Asia/Kolkata. The minute-based scheduler polls cached filings for selected material categories and deduplicates deliveries by endpoint and event. EOD anomalies are included in the after-close briefing, or sent separately when triggered alerts are enabled and the after-close briefing is disabled. Missing coverage is shown in the after-close notification. Browser and OS delivery timing may vary.
 
 For submission, verify signup, filing coverage, INFY research, app install, and delivery to a consenting test device from the actual HTTPS origin before sharing its URL. The prototype has no email verification or account recovery. Limit access to evaluators when piloting.
+
+## Google sign-in and Firestore on Render
+
+The existing Render service still hosts FINN. Google accounts use Firebase Auth and store holdings, watchlists, settings, saved and latest reports, and push subscriptions in Firestore. Guest workspaces and shared market snapshots use the local SQLite database. Firebase Spark can cover this setup within its Auth and Firestore quotas. The Render sleep schedule still affects notifications.
+
+1. Open the dedicated Firebase project, `finn-enam-app`, using its owner account. Enable Authentication, enable the Google provider, and add `finn-enam-u5a1.onrender.com` under **Authentication → Settings → Authorized domains**.
+2. Create the default Firestore Standard database in production mode. Keep its client security rules closed. Render uses the Firebase Admin SDK and IAM to access it.
+3. Grant a dedicated Render service account `roles/datastore.user` and a project custom role containing only `firebaseauth.users.createSession`. Store the service-account JSON in Render as the secret `FIREBASE_SERVICE_ACCOUNT`. Use a single JSON value. Keep the key out of Git and chat.
+4. Copy the Firebase Web app configuration into the Render variable `FIREBASE_WEB_CONFIG` as JSON. It must contain `apiKey`, `appId`, `authDomain`, and `projectId`. Use the project's default `firebaseapp.com` auth domain and set `PUBLIC_ORIGIN` to the HTTPS Render origin.
+5. Deploy, then use a Google account to sign in. Add a watchlist entry or save a report. Sign out and back in and verify that it is present. Run a test notification after opting in.
+
+For an accessible legacy workspace, sign in with its FINN password and use **Settings → Link Google and move my data** before opening a new workspace with that Google account. The verified email must match and the destination must be new. This copies the portfolio, watchlist, settings, saved and recent research, and notification subscriptions. Password hashes stay in SQLite. Data lost in a prior free Render reset cannot be transferred. If a surviving legacy database has been backed up, mount it using `FINN_DB` during the migration window.

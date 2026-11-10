@@ -8,6 +8,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
 import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight,companyLogo} from './providers.mjs';
 import {worldNews} from './news.mjs';
+import {firebaseServices,googleIdentity,workspaceStore,cloudSubscribers} from './firebase.mjs';
+const firebase=firebaseServices(process.env.FIREBASE_WEB_CONFIG,process.env.FIREBASE_SERVICE_ACCOUNT);
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
 const logoAssets=JSON.parse(await readFile(resolve(root,'config/company-logos.json'),'utf8'));
@@ -36,10 +38,26 @@ const fail=(status,message)=>Object.assign(Error(message),{status});
 const tokenHash=token=>createHash('sha256').update(token).digest('hex');
 const cookie=(token,max)=>'finn_session='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+max+(process.env.PUBLIC_ORIGIN?.startsWith('https://')?'; Secure':'');
 const sessionToken=req=>/(?:^|;\s*)finn_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie??'')?.[1];
-const lookup=req=>{
+const localLookup=req=>{
   const token=sessionToken(req);
   return token?db.prepare('SELECT users.* FROM sessions JOIN users ON owner=users.id WHERE token=? AND expires>?').get(tokenHash(token),Date.now()):null;
 };
+const cloudCookie=(token,max)=>'finn_google='+token+'; Path=/; HttpOnly; SameSite=Strict; Max-Age='+max+
+  (process.env.PUBLIC_ORIGIN?.startsWith('https://')?'; Secure':'');
+async function lookup(req){
+  const token=/(?:^|;\s*)finn_google=([A-Za-z0-9._-]+)(?:;|$)/.exec(req.headers.cookie??'')?.[1];
+  if(!token||!firebase)return localLookup(req);
+  let claims;
+  try{claims=await firebase.auth.verifySessionCookie(token);}
+  catch(error){
+    if(['auth/session-cookie-expired','auth/invalid-session-cookie','auth/argument-error'].includes(error.code))return null;
+    throw error;
+  }
+  if(!googleIdentity(claims))return null;
+  const store=workspaceStore(firebase.db,claims.uid);
+  const data=await store.data();
+  return data?{id:'google:'+claims.uid,email:claims.email,data,store}:null;
+}
 async function body(req){
   let length=0;
   const chunks=[];
@@ -207,12 +225,44 @@ async function route(req,res){
     const origin=process.env.PUBLIC_ORIGIN||'http://'+req.headers.host;
     if(req.headers.origin!==origin) throw fail(403,'Origin check failed.');
   }
+  if(method==='GET'&&p==='/api/auth-config')return json(res,200,{google:firebase?.web??null});
+  if(method==='POST'&&p==='/api/google'){
+    if(!firebase)throw fail(503,'Google sign-in is not configured.');
+    if(process.env.PUBLIC_ORIGIN&&req.headers.origin!==process.env.PUBLIC_ORIGIN)throw fail(403,'Origin check failed.');
+    limit('google:'+req.socket.remoteAddress,35,600000);
+    const {idToken,migrate}=await body(req);
+    if(typeof idToken!=='string'||idToken.length>10000)throw fail(400,'Google sign-in could not be verified.');
+    let claims;
+    try{claims=await firebase.auth.verifyIdToken(idToken);}
+    catch(error){
+      if(['auth/id-token-expired','auth/invalid-id-token','auth/argument-error'].includes(error.code))throw fail(401,'Google sign-in could not be verified. Try again.');
+      throw error;
+    }
+    if(!googleIdentity(claims)||Math.abs(Date.now()/1000-claims.auth_time)>300||!Number.isFinite(claims.auth_time))throw fail(401,'Use a recent sign-in with a verified Google account.');
+    const store=workspaceStore(firebase.db,claims.uid);
+    let account={...initial(),mode:'live'}, latest=null, legacy=null, subscriptions=[];
+    if(migrate===true){
+      legacy=localLookup(req);
+      if(!legacy||legacy.email!==claims.email.toLowerCase())throw fail(403,'Sign in with the Google account that matches your existing FINN email.');
+      account=JSON.parse(legacy.data);
+      latest=db.prepare('SELECT symbol,id,created,data FROM latest_research WHERE owner=?').all(legacy.id);
+      subscriptions=db.prepare('SELECT endpoint,data FROM subscriptions WHERE owner=?').all(legacy.id);
+      if(latest.length+subscriptions.length>400||Buffer.byteLength(legacy.data)>900000)throw fail(409,'This workspace is too large to transfer automatically.');
+    }
+    const max=5*86400;
+    const token=await firebase.auth.createSessionCookie(idToken,{expiresIn:max*1000});
+    if(!await store.open(account,latest,subscriptions))throw fail(409,'This Google workspace already exists. Your original workspace has not been changed.');
+    if(legacy)db.prepare('DELETE FROM subscriptions WHERE owner=?').run(legacy.id);
+    const local=sessionToken(req);
+    if(local)db.prepare('DELETE FROM sessions WHERE token=?').run(tokenHash(local));
+    return json(res,200,{email:claims.email},{'Set-Cookie':[cloudCookie(token,max),cookie('',0)]});
+  }
   if(method==='POST'&&p==='/api/guest'){
     limit('auth:'+req.socket.remoteAddress,20,600000);
     const id=randomUUID(), token=randomBytes(32).toString('hex');
     db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(id,'guest:'+id,'','',JSON.stringify({...initial(),mode:'live',guest:true}));
     db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(tokenHash(token),id,Date.now()+86400000);
-    return json(res,200,{guest:true},{'Set-Cookie':cookie(token,86400)});
+    return json(res,200,{guest:true},{'Set-Cookie':[cookie(token,86400),cloudCookie('',0)]});
   }
   if(method==='POST'&&['/api/register','/api/login'].includes(p)){
     limit('auth:'+req.socket.remoteAddress,20,600000);
@@ -221,6 +271,7 @@ async function route(req,res){
     if(!/^\S+@\S+\.\S+$/.test(email)||email.length>200||password.length<8||password.length>128) throw fail(400,'Enter an email and a password with 8–128 characters.');
     let user=db.prepare('SELECT * FROM users WHERE email=?').get(email);
     if(p.endsWith('register')){
+      if(firebase)throw fail(403,'New accounts use Google sign-in.');
       if(user) throw fail(409,'This email already has an account.');
       const id=randomUUID(), salt=randomBytes(16).toString('hex'), key=await hashPassword(password,salt,64);
       try{db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(id,email,salt,key.toString('hex'),JSON.stringify(initial()));}
@@ -233,17 +284,18 @@ async function route(req,res){
     const token=randomBytes(32).toString('hex');
     db.prepare('DELETE FROM sessions WHERE expires<=?').run(Date.now());
     db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(tokenHash(token),user.id,Date.now()+604800000);
-    return json(res,200,{email:user.email},{'Set-Cookie':cookie(token,604800)});
+    return json(res,200,{email:user.email},{'Set-Cookie':[cookie(token,604800),cloudCookie('',0)]});
   }
   if(method==='POST'&&p==='/api/logout'){
     const token=sessionToken(req);
     if(token) db.prepare('DELETE FROM sessions WHERE token=?').run(tokenHash(token));
-    return json(res,200,{}, {'Set-Cookie':cookie('',0)});
+    return json(res,200,{}, {'Set-Cookie':[cookie('',0),cloudCookie('',0)]});
   }
-  const user=lookup(req);
+  const user=await lookup(req);
   if(!user) throw fail(401,'Sign in to continue.');
   const data=JSON.parse(user.data);
   const mutate=fn=>{
+    if(user.store)return user.store.mutate(fn);
     const current=JSON.parse(db.prepare('SELECT data FROM users WHERE id=?').get(user.id).data);
     fn(current);
     db.prepare('UPDATE users SET data=? WHERE id=?').run(JSON.stringify(current),user.id);
@@ -267,15 +319,15 @@ async function route(req,res){
       const symbol=symbolOf(url.searchParams.get('symbol'));
       const holding=data.holdings.find(row=>row.symbol===symbol);
       if(!holding)throw fail(404,'This company is no longer in your portfolio.');
-      const latest=db.prepare('SELECT id,created FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
+      const latest=user.store?await user.store.latest(symbol):db.prepare('SELECT id,created FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
       if(p==='/api/stock-research'){
-        const record=latest&&db.prepare('SELECT data FROM latest_research WHERE owner=? AND id=?').get(user.id,latest.id);
+        const record=user.store?latest:latest&&db.prepare('SELECT data FROM latest_research WHERE owner=? AND id=?').get(user.id,latest.id);
         return json(res,200,{report:record?{...JSON.parse(record.data),draftId:latest.id}:null});
       }
       const price=await briefingQuote(symbol,false);
       return json(res,200,{price,lastResearchedAt:latest?.created??null});
     }
-    if(p==='/api/state') return json(res,200,{email:user.email,...data,catalog,categories,push:{enabled:pushReady(),publicKey:pushReady()?process.env.VAPID_PUBLIC_KEY:null,reason:!push?'HTTPS and VAPID setup required.':!calendarCurrent()?'A verified calendar for the current NSE trading year is required.':null}});
+    if(p==='/api/state') return json(res,200,{email:user.email,googleAccount:Boolean(user.store),...data,catalog,categories,push:{enabled:pushReady(),publicKey:pushReady()?process.env.VAPID_PUBLIC_KEY:null,reason:!push?'HTTPS and VAPID setup required.':!calendarCurrent()?'A verified calendar for the current NSE trading year is required.':null}});
     if(p==='/api/digest'){
       const hours=Number(url.searchParams.get('hours')??24);
       if(![24,48,72,168].includes(hours)) throw fail(400,'Choose a supported time window.');
@@ -313,16 +365,16 @@ async function route(req,res){
     if(p==='/api/preferences'){
       const s=input.settings, mode=input.mode;
       if(!['demo','live'].includes(mode)||!s||!(s.price>=.1&&s.price<=100)||!(s.volume>=1&&s.volume<=100)||!Array.isArray(s.types)||s.types.some(c=>!categories.includes(c))) throw fail(400,'Check the thresholds and selected alert types.');
-      return json(res,200,mutate(d=>{d.mode=mode;d.settings={price:Number(s.price),volume:Number(s.volume),types:s.types,pre:s.pre===true,post:s.post===true};}));
+      return json(res,200,await mutate(d=>{d.mode=mode;d.settings={price:Number(s.price),volume:Number(s.volume),types:s.types,pre:s.pre===true,post:s.post===true};}));
     }
     if(p==='/api/import'){
       let rows;
       try{rows=csvHoldings(input.csv);}catch(error){throw fail(400,error.message);}
-      return json(res,200,mutate(d=>{d.holdings=rows;}));
+      return json(res,200,await mutate(d=>{d.holdings=rows;}));
     }
     if(p==='/api/holding'){
       const symbol=symbolOf(input.symbol);
-      return json(res,200,mutate(d=>{
+      return json(res,200,await mutate(d=>{
         const prior=d.holdings.filter(h=>h.symbol!==symbol);
         if(input.remove===true){d.holdings=prior;return;}
         const quantity=Number(input.quantity),average=Number(input.average);
@@ -336,7 +388,7 @@ async function route(req,res){
     }
     if(p==='/api/watch'){
       const symbol=symbolOf(input.symbol);
-      return json(res,200,mutate(d=>{
+      return json(res,200,await mutate(d=>{
         if(input.remove===true) d.watch=d.watch.filter(s=>s!==symbol);
         else if(!d.watch.includes(symbol)&&d.watch.length<100) d.watch.push(symbol);
       }));
@@ -345,12 +397,16 @@ async function route(req,res){
       limit('research:'+user.id,16,600000);
       const symbol=symbolOf(input.symbol);
       const mode=input.live===true?'live':data.mode;
-      const prior=mode==='live'&&db.prepare('SELECT id,data FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
+      const prior=mode==='live'&&(user.store?await user.store.latest(symbol):db.prepare('SELECT id,data FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol));
       if(input.reuse===true&&prior)return json(res,200,{...JSON.parse(prior.data),draftId:prior.id});
       const report=await research(symbol,mode,input.refresh===true);
       const verified=report.coverage?.financials||report.coverage?.documents;
       if(mode==='live'&&!verified&&prior)throw fail(503,'Fresh company filings were unavailable. Your previous research is still available.');
       const draftId=randomUUID(), serialized=JSON.stringify(report);
+      if(user.store){
+        await user.store.storeReport(symbol,draftId,report,mode==='live'&&Boolean(verified));
+        return json(res,200,{...report,draftId});
+      }
       db.prepare('DELETE FROM drafts WHERE expires<=?').run(Date.now());
       db.prepare('INSERT INTO drafts VALUES(?,?,?,?)').run(draftId,user.id,Date.now()+3600000,serialized);
       if(mode==='live'&&verified){
@@ -361,10 +417,10 @@ async function route(req,res){
     }
     if(p==='/api/save-report'){
       const draft=db.prepare('SELECT data FROM drafts WHERE id=? AND owner=? AND expires>?').get(String(input.id??''),user.id,Date.now());
-      const stored=draft??db.prepare('SELECT data FROM latest_research WHERE id=? AND owner=?').get(String(input.id??''),user.id);
+      const stored=user.store?await user.store.report(String(input.id??'')):draft??db.prepare('SELECT data FROM latest_research WHERE id=? AND owner=?').get(String(input.id??''),user.id);
       if(!stored) throw fail(404,'Research snapshot expired. Run research again.');
       const snapshot={id:String(input.id),...JSON.parse(stored.data)};
-      mutate(d=>{
+      await mutate(d=>{
         if(d.saved.some(r=>r.id===snapshot.id)) return;
         if(d.saved.length>=30) throw fail(409,'Remove a saved report first (limit 30).');
         d.saved.unshift(snapshot);
@@ -374,7 +430,7 @@ async function route(req,res){
     if(p==='/api/recheck'||p==='/api/remove-report'){
       const saved=data.saved.find(r=>r.id===input.id);
       if(!saved) throw fail(404,'Saved report not found.');
-      if(p.endsWith('remove-report')) return json(res,200,mutate(d=>{d.saved=d.saved.filter(r=>r.id!==saved.id);}));
+      if(p.endsWith('remove-report')) return json(res,200,await mutate(d=>{d.saved=d.saved.filter(r=>r.id!==saved.id);}));
       limit('research:'+user.id,16,600000);
       const next=await research(saved.symbol,saved.mode,true);
       return json(res,200,{next,diff:reportDiff(saved,next)});
@@ -382,23 +438,30 @@ async function route(req,res){
     if(p==='/api/subscription/test'){
       if(!pushReady())throw fail(503,'Server push is not configured.');
       limit('test-push:'+user.id,5,600000);
-      const sub=db.prepare('SELECT * FROM subscriptions WHERE owner=? AND endpoint=?').get(user.id,String(input.endpoint??''));
+      const endpoint=String(input.endpoint??'');
+      const sub=user.store?await user.store.subscription(endpoint):db.prepare('SELECT * FROM subscriptions WHERE owner=? AND endpoint=?').get(user.id,endpoint);
       if(!sub)throw fail(404,'Enable notifications on this device first.');
       try{await sendPush(sub,'FINN · Test notification','This device can receive FINN briefings.');}
       catch(error){
-        if([404,410].includes(error.statusCode))db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(sub.endpoint,user.id);
+        if([404,410].includes(error.statusCode))await removeSubscription(sub);
         throw fail(502,'The push service rejected this test. Reconnect notifications and try again.');
       }
       return json(res,200,{accepted:true});
     }
     if(p==='/api/subscription'){
       if(input.remove===true){
-        db.prepare('DELETE FROM subscriptions WHERE owner=? AND endpoint=?').run(user.id,String(input.endpoint??''));
+        const endpoint=String(input.endpoint??'');
+        if(user.store)await user.store.removeSubscription(endpoint);
+        else db.prepare('DELETE FROM subscriptions WHERE owner=? AND endpoint=?').run(user.id,endpoint);
         return json(res,200,{});
       }
       if(!pushReady()) throw fail(503,'Server push is not configured.');
       validateSubscription(input);
-      db.prepare('INSERT INTO subscriptions VALUES(?,?,?) ON CONFLICT(endpoint) DO UPDATE SET owner=excluded.owner,data=excluded.data').run(input.endpoint,user.id,JSON.stringify({endpoint:input.endpoint,keys:input.keys}));
+      const serialized=JSON.stringify({endpoint:input.endpoint,keys:input.keys});
+      if(user.store){
+        await user.store.setSubscription(input.endpoint,serialized);
+        db.prepare('DELETE FROM subscriptions WHERE endpoint=?').run(input.endpoint);
+      }else db.prepare('INSERT INTO subscriptions VALUES(?,?,?) ON CONFLICT(endpoint) DO UPDATE SET owner=excluded.owner,data=excluded.data').run(input.endpoint,user.id,serialized);
       return json(res,200,{});
     }
   }
@@ -407,13 +470,17 @@ async function route(req,res){
 function sendPush(subscription,title,message){
   return push.sendNotification(JSON.parse(subscription.data),JSON.stringify({title,body:message,url:'/#briefing'}),{TTL:900,timeout:9000});
 }
+async function removeSubscription(subscription){
+  if(subscription.uid&&firebase)await workspaceStore(firebase.db,subscription.uid).removeSubscription(subscription.endpoint);
+  else db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(subscription.endpoint,subscription.owner);
+}
 async function deliver(subscription,event,title,message){
   const claimed=db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run(subscription.endpoint,event,Date.now());
   if(!claimed.changes) return;
   try{
     await sendPush(subscription,title,message);
   }catch(error){
-    if([404,410].includes(error.statusCode)) db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(subscription.endpoint,subscription.owner);
+    if([404,410].includes(error.statusCode))await removeSubscription(subscription);
     else db.prepare('DELETE FROM deliveries WHERE endpoint=? AND event=?').run(subscription.endpoint,event);
     console.error('Push delivery failed:',error.statusCode??error.message);
   }
@@ -433,13 +500,17 @@ async function tick(){
     db.prepare("DELETE FROM subscriptions WHERE owner IN (SELECT id FROM users WHERE email LIKE 'guest:%' AND id NOT IN (SELECT owner FROM sessions))").run();
     db.prepare("DELETE FROM users WHERE email LIKE 'guest:%' AND id NOT IN (SELECT owner FROM sessions)").run();
     const users=db.prepare('SELECT DISTINCT users.* FROM users JOIN sessions ON owner=users.id WHERE expires>?').all(Date.now());
-    const portfolios=users.map(user=>JSON.parse(user.data));
+    const cloud=pushReady()&&firebase?await cloudSubscribers(firebase.db).catch(error=>{
+      console.error('Cloud notifications could not be read:',error.code??error.name);
+      return [];
+    }):[];
+    const portfolios=[...users.map(user=>JSON.parse(user.data)),...cloud.map(row=>JSON.parse(row.preferences))];
     const symbols=[...new Set(portfolios.flatMap(data=>data.holdings.map(row=>row.symbol)))];
     await Promise.all([briefingFilings(false,key),briefingNews(false,key),
       mapLimit(symbols,6,symbol=>briefingQuote(symbol,false,key))]);
     if(pushReady()){
       const subscribers=db.prepare('SELECT subscriptions.*,users.data AS preferences FROM subscriptions JOIN users ON owner=users.id').all();
-      await mapLimit(subscribers,3,async subscription=>{
+      await mapLimit([...subscribers,...cloud],3,async subscription=>{
         const data={...JSON.parse(subscription.preferences),mode:'live'};
         if(!data.settings[slot.slot])return;
         const report=await digest(data,24);
@@ -456,9 +527,11 @@ const server=createServer((req,res)=>{
   res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('Referrer-Policy','no-referrer');
   res.setHeader('X-Frame-Options','DENY');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  if(firebase)res.setHeader('Cross-Origin-Opener-Policy','same-origin-allow-popups');
+  const authPolicy=firebase?" https://www.gstatic.com https://apis.google.com; frame-src https://accounts.google.com https://"+firebase.web.authDomain+"; connect-src 'self' https://"+firebase.web.authDomain+" https://identitytoolkit.googleapis.com https://securetoken.googleapis.com":"";
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'"+authPolicy+"; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   route(req,res).catch(error=>{
-    if(!error.status) console.error(error);
+    if(!error.status)console.error('Request failed:',error.code??error.name);
     if(!res.headersSent) json(res,error.status??500,{error:error.status?error.message:'Something went wrong. Please try again.'});
     else res.end();
   });

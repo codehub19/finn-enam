@@ -12,5 +12,8 @@
   },
   "optionalDependencies": {
     "web-push": "3.6.7"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0"
   }
 }

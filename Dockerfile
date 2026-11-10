@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils g
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && mkdir -p /data && chown node:node /data
-COPY data.mjs providers.mjs exchange.mjs gemini.mjs guidance.mjs insights.mjs news.mjs pdf.mjs server.mjs ./
+COPY data.mjs providers.mjs exchange.mjs gemini.mjs guidance.mjs insights.mjs news.mjs pdf.mjs firebase.mjs server.mjs ./
 COPY public ./public
 COPY config ./config
 COPY scripts/pdf_text.py ./scripts/pdf_text.py

@@ -1,3 +1,4 @@
+import {firebaseServices,googleIdentity,workspaceStore} from '../firebase.mjs';
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
@@ -138,7 +139,7 @@ let server,url,dir;
 before(async()=>{
  dir=await mkdtemp(join(tmpdir(),'finn-test-'));
  const offline='data:text/javascript,'+encodeURIComponent("globalThis.fetch=async()=>new Response('',{status:403});");
- server=spawn(process.execPath,['--import',offline,'server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',HOST:'127.0.0.1',FINN_DB:join(dir,'test.sqlite'),PUBLIC_ORIGIN:'',VAPID_PUBLIC_KEY:'',GEMINI_API_KEY:''}});
+ server=spawn(process.execPath,['--import',offline,'server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',HOST:'127.0.0.1',FINN_DB:join(dir,'test.sqlite'),PUBLIC_ORIGIN:'',VAPID_PUBLIC_KEY:'',GEMINI_API_KEY:'',FIREBASE_WEB_CONFIG:'',FIREBASE_SERVICE_ACCOUNT:''}});
  server.stderr.on('data',chunk=>process.stderr.write(chunk));
  url=await new Promise((resolve,reject)=>{
    server.once('exit',code=>reject(Error('Test server exited '+code)));
@@ -233,4 +234,46 @@ test('every built-in company has a locally served logo',async()=>{
    assert.equal(response.status,200,symbol);
    assert.match(response.headers.get('content-type'),/^image[/]/);
  }
+});
+
+test('Firebase feature gate and Google provider claims fail closed',async()=>{
+ assert.equal(firebaseServices(undefined,undefined),null);
+ assert.throws(()=>firebaseServices('{}','{}'),/identify the same project/);
+ assert.equal(googleIdentity({email:'one@example.test',email_verified:true,firebase:{sign_in_provider:'google.com'}}),true);
+ assert.equal(googleIdentity({email:'one@example.test',email_verified:false,firebase:{sign_in_provider:'google.com'}}),false);
+ assert.equal(googleIdentity({email:'one@example.test',email_verified:true,firebase:{sign_in_provider:'password'}}),false);
+ assert.deepEqual((await api('auth-config')).data,{google:null});
+ assert.equal((await api('google',{idToken:'unconfigured'})).status,503);
+});
+
+test('cloud workspace transactions keep reports and migrated data isolated',async()=>{
+ const rows=new Map();
+ const snapshot=path=>({exists:rows.has(path),data:()=>rows.get(path),get:key=>rows.get(path)?.[key]});
+ const collection=path=>({
+  doc:id=>ref(path+'/'+id),
+  where:(field,_operator,value)=>({limit:()=>({get:async()=>{
+   const prefix=path+'/';
+   const found=[...rows.keys()].filter(key=>key.startsWith(prefix)&&!key.slice(prefix.length).includes('/')&&rows.get(key)[field]===value);
+   return {empty:found.length===0,docs:found.slice(0,1).map(snapshot)};
+  }})})
+ });
+ const ref=path=>({path,collection:name=>collection(path+'/'+name),get:async()=>snapshot(path),set:async value=>rows.set(path,value)});
+ const db={collection,runTransaction:async work=>work({
+  get:document=>document.get(),create:(document,value)=>document.set(value),set:(document,value)=>document.set(value),
+  update:(document,value)=>document.set({...rows.get(document.path),...value}),delete:document=>rows.delete(document.path)
+ })};
+ const a=workspaceStore(db,'google-user-one'), b=workspaceStore(db,'google-user-two');
+ const legacy={symbol:'TCS',id:'legacy-report',created:'2026-11-01',data:'{}'};
+ assert.equal(await a.open({watch:['TCS'],saved:[]},[legacy]),true);
+ assert.equal(await b.open({watch:[],saved:[]}),true);
+ assert.equal(await a.open({watch:['INFY'],saved:[]},[legacy]),false);
+ assert.deepEqual(JSON.parse(await a.data()).watch,['TCS']);
+ assert.equal(await b.latest('TCS'),undefined);
+ await a.mutate(data=>data.watch.push('INFY'));
+ await a.storeReport('TCS','new-report',{createdAt:'2026-11-10'},true);
+ await a.storeReport('TCS','slow-report',{createdAt:'2026-11-09'},true);
+ const reopened=workspaceStore(db,'google-user-one');
+ assert.deepEqual(JSON.parse(await reopened.data()).watch,['TCS','INFY']);
+ assert.equal((await reopened.report('new-report')).id,'new-report');
+ assert.equal(await b.report('new-report'),null);
 });

@@ -119,9 +119,41 @@ function bindPicker(id,onSelect,onClear=()=>{}){
   });
   return {input,reset,status};
 }
+let googleConfig, googleClient, legacyAuth=false;
+async function openGoogle(control,migrate=false){
+  const message=document.querySelector(migrate?'#google-link-status':'#auth-error');
+  if(message)message.textContent='';
+  await act(control,async()=>{
+    try{
+      const client=await googleClient;
+      const credential=await client.signInWithPopup(client.auth,new client.GoogleAuthProvider());
+      try{
+        await api('google',{idToken:await credential.user.getIdToken(),migrate});
+        state=await api('state');
+        render();
+      }finally{await client.signOut(client.auth).catch(()=>{});}
+    }catch(error){
+      const text=error.code==='auth/popup-blocked'?'Allow pop-ups for FINN and try again.':
+        error.code==='auth/popup-closed-by-user'?'Google sign-in was cancelled.':error.code?'Google sign-in is unavailable. Try again or continue as guest.':error.message;
+      if(message)message.textContent=text;
+    }
+  });
+}
+function bindGoogle(control,migrate=false){
+  control.disabled=true;
+  googleClient.then(()=>{
+    control.disabled=false;
+    control.onclick=()=>void openGoogle(control,migrate);
+  }).catch(()=>{
+    control.textContent='Google sign-in unavailable';
+    const status=document.querySelector(migrate?'#google-link-status':'#auth-error');
+    if(status)status.textContent='Google sign-in could not load. You can still continue as guest.';
+  });
+}
 function auth(){
   nav.hidden=true; logout.hidden=true;
-  const creating=authMode==='register';
+  const google=Boolean(googleConfig&&!legacyAuth);
+  const creating=!googleConfig&&authMode==='register';
   main.innerHTML=`<div class="auth auth-layout">
     <aside class="auth-intro">
       <p class="eyebrow">INDIAN EQUITY WORKSPACE</p>
@@ -132,11 +164,15 @@ function auth(){
       </div>
     </aside>
     <section class="auth-card" aria-labelledby="auth-title">
-      <div class="auth-switch" aria-label="Account options">
+      ${google?`<h2 id="auth-title">Welcome to FINN</h2>
+      <p class="muted auth-description">Sign in with Google to keep your portfolio and research across devices.</p>
+      <p id="auth-error" class="error" role="alert"></p>
+      <button type="button" class="primary auth-action" id="google-sign-in" data-pending="Connecting to Google…">Continue with Google</button>`:`
+      ${googleConfig?'':`<div class="auth-switch" aria-label="Account options">
         <button type="button" data-auth-mode="login" aria-pressed="${!creating}">Sign in</button>
         <button type="button" data-auth-mode="register" aria-pressed="${creating}">Create account</button>
-      </div>
-      <h2 id="auth-title">${creating?'Create your FINN account':'Welcome back'}</h2>
+      </div>`}
+      <h2 id="auth-title">${googleConfig?'Sign in to your old FINN account':creating?'Create your FINN account':'Welcome back'}</h2>
       <p class="muted auth-description">${creating?'Start with an 18-stock sample portfolio you can make your own.':'Sign in to open your portfolio and saved research.'}</p>
       <form id="auth">
         <p id="auth-error" class="error" role="alert"></p>
@@ -149,7 +185,8 @@ function auth(){
           ${creating?'<small id="password-hint">Use at least 8 characters.</small>':''}
         </div>
         <button class="primary auth-action" data-pending="${creating?'Creating your account…':'Signing in…'}">${creating?'Create account':'Sign in'}</button>
-      </form>
+      </form>`}
+      ${googleConfig?'<button type="button" id="legacy-auth" class="ghost auth-action">'+(google?'Use an existing FINN password':'Back to Google sign-in')+'</button>':''}
       <div class="auth-divider"><span>or explore first</span></div>
       <button type="button" class="auth-action" id="guest" data-pending="Opening guest workspace…">Continue as guest ${icon('arrow')}</button>
       <p class="muted auth-guest-note">No account needed. Guest sessions expire after 24 hours.</p>
@@ -163,15 +200,22 @@ function auth(){
     main.querySelector('[name="email"]').value=email;
     main.querySelector('[data-auth-mode][aria-pressed="true"]').focus();
   };
+  main.querySelector('#legacy-auth')?.addEventListener('click',()=>{
+    legacyAuth=!legacyAuth;
+    authMode='login';
+    auth();
+  });
+  if(google)bindGoogle(main.querySelector('#google-sign-in'));
   const password=main.querySelector('#auth-password'), toggle=main.querySelector('#show-password');
-  toggle.onclick=()=>{
+  if(toggle)toggle.onclick=()=>{
     const visible=password.type==='password';
     password.type=visible?'text':'password';
     toggle.textContent=visible?'Hide':'Show';
     toggle.setAttribute('aria-label',visible?'Hide password':'Show password');
   };
   document.querySelector('#guest').onclick=e=>act(e.currentTarget,async()=>{await api('guest',{});state=await api('state');render();});
-  document.querySelector('#auth').onsubmit=e=>{
+  const form=main.querySelector('#auth');
+  if(form)form.onsubmit=e=>{
     e.preventDefault();const data=Object.fromEntries(new FormData(e.target));
     act(e.submitter,async()=>{
       const error=document.querySelector('#auth-error');
@@ -642,6 +686,11 @@ function settings(){
   main.innerHTML=hero('05 / Configure','Your settings','Choose the feed, tune what counts as unusual, and manage browser notifications.')+
     panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+'</details><button class="primary">Save preferences</button></form>')+
     panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Send test notification','id="test-push" '+(!state.push.enabled?'disabled':''))+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
+  if(googleConfig&&!state.guest&&!state.googleAccount){
+    main.insertAdjacentHTML('beforeend',panel('Move to Google sign-in','<p class="muted">Link the Google account with the same email to copy this workspace to Firestore.</p>'+
+      button('Link Google and move my data','id="link-google"')+'<p id="google-link-status" class="error" role="alert"></p>'));
+    bindGoogle(main.querySelector('#link-google'),true);
+  }
   document.querySelector('#prefs').onsubmit=e=>{
     e.preventDefault();const f=new FormData(e.target);
     act(e.submitter,async()=>{
@@ -707,5 +756,16 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installProm
 window.addEventListener('appinstalled',()=>{install.hidden=true;installPrompt=null;});
 install.onclick=async()=>{await installPrompt?.prompt();install.hidden=true;installPrompt=null;};
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+const googleConfigRequest=api('auth-config').then(result=>result.google).catch(()=>null);
 try{state=await api('state');}catch(error){if(error.message!=='Sign in to continue.')notify(error.message);}
+googleConfig=await googleConfigRequest;
+if(googleConfig){
+  const sdk='https://www.gstatic.com/firebasejs/12.12.0/';
+  googleClient=Promise.all([import(sdk+'firebase-app.js'),import(sdk+'firebase-auth.js')]).then(async ([app,auth])=>{
+    const instance=auth.getAuth(app.initializeApp(googleConfig));
+    await auth.setPersistence(instance,auth.inMemoryPersistence);
+    return {...auth,auth:instance};
+  });
+  googleClient.catch(()=>{});
+}
 render();

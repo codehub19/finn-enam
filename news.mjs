@@ -1,6 +1,8 @@
 import {createHash} from 'node:crypto';
 
 const feeds=[
+  {source:'Reserve Bank of India',url:'https://rbi.org.in/pressreleases_rss.xml',topic:'India policy',filter:/monetary policy|repo rate|liquidity|foreign exchange|rupee|inflation|banking regulation|government securities/i},
+  {source:'U.S. Trade Representative',url:'https://ustr.gov/about-us/policy-offices/press-office/press-releases/rss',topic:'Trade',filter:/india|tariff|trade agreement|export control/i},
   {source:'Federal Reserve',url:'https://www.federalreserve.gov/feeds/press_monetary.xml',topic:'Interest rates'},
   {source:'Federal Reserve',url:'https://www.federalreserve.gov/feeds/speeches.xml',topic:'Interest rates',filter:/inflation|economic outlook|monetary policy|interest rate|labor market/i},
   {source:'European Central Bank',url:'https://www.ecb.europa.eu/rss/press.html',topic:'Interest rates',filter:/monetary policy|inflation|interest rates|economic outlook|bank lending|growth|financial stability|trade|interview/i},
@@ -11,6 +13,8 @@ const feeds=[
 ];
 
 const context={
+  'India policy':'RBI decisions can move short-term funding costs, bank margins, government bond yields and the rupee.',
+  Trade:'Tariffs and trade restrictions can change the cost or demand outlook for Indian exporters and importers. Check which goods and countries the release covers.',
   'Interest rates':'Policy and inflation expectations can affect bond yields, currencies, and how investors value equities. For Indian stocks, watch whether the dollar and foreign fund flows move alongside the announcement.',
   Inflation:'A change in inflation can shift expectations for interest rates and the U.S. dollar. That can affect global risk appetite and the rupee.',
   Employment:'A surprise in U.S. hiring or wages can change expectations for growth and interest rates. That can influence equity valuations and demand expectations for exporters.',
@@ -30,7 +34,7 @@ export function parseWorldFeed(xml,feed){
     const timestamp=Date.parse(clean(field(entry,'pubDate')||field(entry,'dc:date')));
     const rawLink=clean(field(entry,'link'));
     const url=rawLink?URL.parse(rawLink,base):null;
-    if(!title||!Number.isFinite(timestamp)||!url||url.hostname!==base.hostname||!['http:','https:'].includes(url.protocol)||url.username||url.password||url.port)return [];
+    if(!title||!Number.isFinite(timestamp)||!url||url.hostname.replace(/^www\./,'')!==base.hostname.replace(/^www\./,'')||!['http:','https:'].includes(url.protocol)||url.username||url.password||url.port)return [];
     if(feed.filter&&!feed.filter.test(title+' '+url.pathname))return [];
     url.protocol='https:';
     const href=url.href;
@@ -38,16 +42,22 @@ export function parseWorldFeed(xml,feed){
   });
 }
 
+const impact=row=>{
+  const title=row.title;
+  if(row.topic==='India policy'||/\bIndia(?:n)?\b|\brupee\b/i.test(title))return 5;
+  if(/FOMC statement|monetary policy decision|target range|OPEC|oil supply|crude oil|tariff/i.test(title))return 4;
+  return {Inflation:3,Energy:3,Trade:3,Employment:2,'Interest rates':1}[row.topic]??0;
+};
 export function selectWorldNews(items,now=Date.now()){
   const rows=[...new Map(items.filter(row=>row.timestamp<=now&&row.timestamp>=now-72*3600000).map(row=>[row.url,row])).values()]
-    .sort((a,b)=>b.timestamp-a.timestamp);
+    .sort((a,b)=>impact(b)-impact(a)||b.timestamp-a.timestamp);
   const latest=rows.filter(row=>row.timestamp>=now-24*3600000);
-  return {hours:latest.length||!rows.length?24:72,items:(latest.length?latest:rows).slice(0,18)};
+  return {hours:latest.length||!rows.length?24:72,items:(latest.length?latest:rows).slice(0,10)};
 }
 
 let cachedFeed;
-export async function worldNews(){
-  if(!cachedFeed||cachedFeed.until<=Date.now()){
+export async function worldNews(refresh=false){
+  if(refresh||!cachedFeed||cachedFeed.until<=Date.now()){
     const promise=Promise.allSettled(feeds.map(async feed=>{
       const res=await fetch(feed.url,{signal:AbortSignal.timeout(6500),headers:{Accept:'application/rss+xml, application/xml, text/xml, */*'}});
       if(!res.ok)throw Error('Unavailable feed');

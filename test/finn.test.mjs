@@ -193,3 +193,15 @@ test('PWA shell, private accounts, import, digest, sector rankings and saved-rep
  assert.equal((await api('state',null,a.cookie)).status,401);
  assert.equal((await api('login',{email:'one@example.test',password:'very-long-test-password'})).status,200);
 });
+
+test('guest sessions are private and can be signed out',async()=>{
+ const guest=await api('guest',{});
+ assert.equal(guest.status,200);
+ assert.equal(guest.data.guest,true);
+ const other=await api('guest',{});
+ assert.equal((await api('state',null,guest.cookie)).data.guest,true);
+ assert.equal((await api('watch',{symbol:'TCS'},guest.cookie)).status,200);
+ assert.deepEqual((await api('state',null,other.cookie)).data.watch,[]);
+ assert.equal((await api('logout',{},guest.cookie)).status,200);
+ assert.equal((await api('state',null,guest.cookie)).status,401);
+});

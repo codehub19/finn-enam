@@ -21,9 +21,10 @@ db.exec(`
  CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS subscriptions (endpoint TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), data TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS briefing_cache (key TEXT PRIMARY KEY, slot TEXT NOT NULL, value TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS deliveries (endpoint TEXT NOT NULL, event TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(endpoint,event));
 `);
-const cfg={price:5,volume:2,types:categories.slice(0,-1),pre:true,post:true,instant:false};
+const cfg={price:5,volume:2,types:categories.slice(0,-1),pre:true,post:true};
 const initial=()=>({holdings:seeded,watch:[],saved:[],settings:cfg,mode:'demo'});
 const json=(res,status,value,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers});res.end(JSON.stringify(value));};
 const fail=(status,message)=>Object.assign(Error(message),{status});
@@ -74,18 +75,56 @@ async function mapLimit(list, concurrency, fn){
   }));
   return result;
 }
-async function digest(data,hours,refresh=false,rssOnly=false){
+const briefingJobs=new Map();
+function briefSlot(){
+  const now=new Date();
+  const active=briefingSlot(now,calendar,true);
+  return active?active.day+':'+active.slot:null;
+}
+async function snapshot(key,load,refresh=false,slot=briefSlot()){
+  const prior=db.prepare('SELECT slot,value FROM briefing_cache WHERE key=?').get(key);
+  if(!refresh&&prior&&(!slot||prior.slot===slot))return JSON.parse(prior.value);
+  if(briefingJobs.has(key))return briefingJobs.get(key);
+  const job=Promise.resolve().then(load).then(value=>{
+    if(value.error&&prior){
+      const previous=JSON.parse(prior.value);
+      if(!previous.error)value={...previous,stale:true};
+    }
+    db.prepare('INSERT INTO briefing_cache VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET slot=excluded.slot,value=excluded.value')
+      .run(key,slot??dateIST()+':manual',JSON.stringify(value));
+    return value;
+  }).finally(()=>briefingJobs.delete(key));
+  briefingJobs.set(key,job);
+  return job;
+}
+const briefingFilings=(refresh,slot)=>snapshot('filings',async()=>{
+  const current=await filings(168,'live',refresh);
+  if(current.error)return current;
+  const saved=db.prepare('SELECT value FROM briefing_cache WHERE key=?').get('filings');
+  const older=saved?JSON.parse(saved.value).rows??[]:[];
+  const cutoff=Date.now()-168*3600000;
+  const rows=new Map();
+  for(const row of [...older,...current.rows]){
+    if(row.timestamp<cutoff)continue;
+    rows.set(row.url.startsWith('https://nsearchives.')?row.url:row.id,row);
+  }
+  return {...current,rows:[...rows.values()],checkedAt:new Date().toISOString()};
+},refresh,slot);
+const briefingNews=(refresh,slot)=>snapshot('world',async()=>({...await worldNews(refresh),checkedAt:new Date().toISOString()}),refresh,slot);
+const briefingQuote=(symbol,refresh,slot)=>snapshot('quote:'+symbol,()=>quote(symbol,'live',refresh),refresh,slot);
+async function digest(data,hours,refresh=false){
   const held=new Set(data.holdings.map(h=>h.symbol));
   const watched=new Set(data.watch);
   const sectors=new Set(catalog.filter(s=>held.has(s.symbol)).map(s=>s.sector));
   const related=new Set(catalog.filter(s=>!held.has(s.symbol)&&sectors.has(s.sector)).map(s=>s.symbol));
-  const {rows,...feed}=await filings(hours,data.mode,refresh,rssOnly);
-  const ranked=rows.map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
+  const {rows,...feed}=data.mode==='live'?await briefingFilings(refresh):await filings(hours,data.mode,refresh);
+  const cutoff=(Date.parse(feed.checkedAt)||Date.now())-hours*3600000;
+  const ranked=rows.filter(row=>row.timestamp>=cutoff).map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
     .sort((a,b)=>Number(b.alert)-Number(a.alert)||Number(a.category==='Routine')-Number(b.category==='Routine')||b.timestamp-a.timestamp);
-  return {...feed,checkedAt:new Date().toISOString(),owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
+  return {checkedAt:new Date().toISOString(),...feed,owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
 }
 async function scan(data,todayOnly=false,refresh=false){
-  const results=await mapLimit(data.holdings,6,h=>quote(h.symbol,data.mode,refresh).then(price=>({symbol:h.symbol,...price})));
+  const results=await mapLimit(data.holdings,6,h=>(data.mode==='live'?briefingQuote(h.symbol,refresh):quote(h.symbol,data.mode,refresh)).then(price=>({symbol:h.symbol,...price})));
   const alerts=results.filter(q=>(!todayOnly||q.date===dateIST())&&(Math.abs(q.day??0)>=data.settings.price||(q.volume??0)>=data.settings.volume));
   const checks=await mapLimit(alerts,3,async row=>{
     const reasons=[];
@@ -105,7 +144,7 @@ async function scan(data,todayOnly=false,refresh=false){
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',
-  '/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/sample-holdings.csv':'sample-holdings.csv'
+  '/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/logo-tcs.png':'logo-tcs.png','/sample-holdings.csv':'sample-holdings.csv'
 };
 const mime={html:'text/html',js:'text/javascript',css:'text/css',webmanifest:'application/manifest+json',svg:'image/svg+xml',png:'image/png',csv:'text/csv'};
 let push,calendar;
@@ -146,6 +185,13 @@ async function route(req,res){
     const origin=process.env.PUBLIC_ORIGIN||'http://'+req.headers.host;
     if(req.headers.origin!==origin) throw fail(403,'Origin check failed.');
   }
+  if(method==='POST'&&p==='/api/guest'){
+    limit('auth:'+req.socket.remoteAddress,20,600000);
+    const id=randomUUID(), token=randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO users VALUES(?,?,?,?,?)').run(id,'guest:'+id,'','',JSON.stringify({...initial(),mode:'live',guest:true}));
+    db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(tokenHash(token),id,Date.now()+86400000);
+    return json(res,200,{guest:true},{'Set-Cookie':cookie(token,86400)});
+  }
   if(method==='POST'&&['/api/register','/api/login'].includes(p)){
     limit('auth:'+req.socket.remoteAddress,20,600000);
     const input=await body(req);
@@ -184,7 +230,9 @@ async function route(req,res){
   if(method==='GET'){
     if(p==='/api/world-news'){
       limit('world-news:'+user.id,45,60000);
-      return json(res,200,await worldNews());
+      const refresh=url.searchParams.get('refresh')==='1';
+      if(refresh)limit('world-refresh:'+user.id,6,600000);
+      return json(res,200,await briefingNews(refresh));
     }
     if(p==='/api/stocks'){
       limit('stocks:'+user.id,90,60000);
@@ -207,7 +255,7 @@ async function route(req,res){
     if(p==='/api/filing-detail'){
       limit('filing-detail:'+user.id,25,600000);
       const filingId=url.searchParams.get('id');
-      const feed=await digest({...data,mode:'live'},168,false,filingId?.startsWith('rss|'));
+      const feed=await digest({...data,mode:'live'},168);
       if(feed.error)throw fail(503,'NSE filings are temporarily unavailable.');
       const row=[...feed.owned,...feed.related,...feed.watch].find(f=>f.id===filingId);
       if(!row)throw fail(404,'This filing is outside your current briefing.');
@@ -230,7 +278,7 @@ async function route(req,res){
     if(p==='/api/preferences'){
       const s=input.settings, mode=input.mode;
       if(!['demo','live'].includes(mode)||!s||!(s.price>=.1&&s.price<=100)||!(s.volume>=1&&s.volume<=100)||!Array.isArray(s.types)||s.types.some(c=>!categories.includes(c))) throw fail(400,'Check the thresholds and selected alert types.');
-      return json(res,200,mutate(d=>{d.mode=mode;d.settings={price:Number(s.price),volume:Number(s.volume),types:s.types,pre:s.pre===true,post:s.post===true,instant:s.instant===true};}));
+      return json(res,200,mutate(d=>{d.mode=mode;d.settings={price:Number(s.price),volume:Number(s.volume),types:s.types,pre:s.pre===true,post:s.post===true};}));
     }
     if(p==='/api/import'){
       let rows;
@@ -326,40 +374,35 @@ async function deliver(subscription,event,title,message){
 }
 let checking=false;
 async function tick(){
-  if(checking||!pushReady()) return;
+  if(checking||!calendarCurrent()) return;
   checking=true;
   try{
     const slot=briefingSlot(new Date(),calendar);
-    const slots=new Map();
+    if(!slot)return;
+    const key=slot.day+':'+slot.slot;
+    if(db.prepare('SELECT 1 FROM deliveries WHERE endpoint=? AND event=?').get('scheduler',key))return;
     db.prepare('DELETE FROM deliveries WHERE created<?').run(Date.now()-14*86400000);
-    const subscribers=db.prepare('SELECT subscriptions.*,users.data AS preferences FROM subscriptions JOIN users ON owner=users.id').all();
-    await mapLimit(subscribers,3,async subscription=>{
-      const data={...JSON.parse(subscription.preferences),mode:'live'};
-      if(slot?.slot==='post'&&data.settings.instant&&!data.settings.post){
-        const key=slot.day+':eod-moves';
-        if(!db.prepare('SELECT 1 FROM deliveries WHERE endpoint=? AND event=?').get(subscription.endpoint,key)){
-          if(!slots.has(subscription.owner)) slots.set(subscription.owner,scan(data,true));
-          const moves=await slots.get(subscription.owner);
-          if(moves.alerts.length) await deliver(subscription,key,'FINN · EOD moves',moves.alerts.length+' holdings crossed your thresholds.');
-        }
-      }
-      if(slot&&data.settings[slot.slot]){
-        const key=slot.day+':'+slot.slot;
-        if(!db.prepare('SELECT 1 FROM deliveries WHERE endpoint=? AND event=?').get(subscription.endpoint,key)){
-          const report=await digest(data,24);
-          if(slot.slot==='post'&&!slots.has(subscription.owner)) slots.set(subscription.owner,scan(data,true));
-          const moves=slot.slot==='post'?await slots.get(subscription.owner):null;
-          const summary=report.error?'NSE filings unavailable.':report.owned.length+' portfolio filings, '+report.owned.filter(r=>r.alert).length+' selected alerts.';
-          await deliver(subscription,key,slot.slot==='pre'?'FINN · Before the open':'FINN · After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged · '+moves.coverage+'/'+moves.total+' quotes.':''));
-        }
-      }
-      if(data.settings.instant){
+    db.prepare("DELETE FROM drafts WHERE owner IN (SELECT id FROM users WHERE email LIKE 'guest:%' AND id NOT IN (SELECT owner FROM sessions WHERE expires>?))").run(Date.now());
+    db.prepare('DELETE FROM sessions WHERE expires<=?').run(Date.now());
+    db.prepare("DELETE FROM subscriptions WHERE owner IN (SELECT id FROM users WHERE email LIKE 'guest:%' AND id NOT IN (SELECT owner FROM sessions))").run();
+    db.prepare("DELETE FROM users WHERE email LIKE 'guest:%' AND id NOT IN (SELECT owner FROM sessions)").run();
+    const users=db.prepare('SELECT DISTINCT users.* FROM users JOIN sessions ON owner=users.id WHERE expires>?').all(Date.now());
+    const portfolios=users.map(user=>JSON.parse(user.data));
+    const symbols=[...new Set(portfolios.flatMap(data=>data.holdings.map(row=>row.symbol)))];
+    await Promise.all([briefingFilings(false,key),briefingNews(false,key),
+      mapLimit(symbols,6,symbol=>briefingQuote(symbol,false,key))]);
+    if(pushReady()){
+      const subscribers=db.prepare('SELECT subscriptions.*,users.data AS preferences FROM subscriptions JOIN users ON owner=users.id').all();
+      await mapLimit(subscribers,3,async subscription=>{
+        const data={...JSON.parse(subscription.preferences),mode:'live'};
+        if(!data.settings[slot.slot])return;
         const report=await digest(data,24);
-        for(const filing of report.owned.filter(r=>r.alert&&r.timestamp>=Date.now()-15*60000)){
-          await deliver(subscription,'filing:'+filing.id,'FINN · '+filing.symbol,filing.title);
-        }
-      }
-    });
+        const moves=slot.slot==='post'?await scan(data,true):null;
+        const summary=report.error?'Exchange filings unavailable.':report.owned.length+' portfolio filings, '+report.owned.filter(r=>r.alert).length+' selected alerts.';
+        await deliver(subscription,key,slot.slot==='pre'?'FINN · Before the open':'FINN · After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged · '+moves.coverage+'/'+moves.total+' quotes.':''));
+      });
+    }
+    db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run('scheduler',key,Date.now());
   }catch(error){console.error('Scheduler:',error.message);}
   finally{checking=false;}
 }
@@ -376,5 +419,5 @@ const server=createServer((req,res)=>{
 });
 server.listen(Number(process.env.PORT||4173),process.env.HOST||'127.0.0.1',()=>{
   console.log('FINN listening at http://'+(process.env.HOST||'127.0.0.1')+':'+server.address().port);
-  if(pushReady()){setInterval(tick,60000).unref();void tick();}
+  if(calendarCurrent()){setInterval(tick,60000).unref();void tick();}
 });

@@ -1,3 +1,4 @@
+import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {catalog,classify,dateIST,demoBars,metrics,fundamentals} from './data.mjs';
 import {extractEvidence,reportInsights,quarterlyComparison,parseNseQuarterly} from './insights.mjs';
@@ -5,6 +6,7 @@ import {guidanceScorecard} from './guidance.mjs';
 import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections} from './gemini.mjs';
 import {parseDailyReport,parseAnnouncementRss} from './exchange.mjs';
 
+const filingIndex=JSON.parse(await readFile(new URL('./config/nse-filing-index.json',import.meta.url),'utf8'));
 const nse='https://www.nseindia.com';
 const exchangePage=nse+'/companies-listing/corporate-filings-announcements';
 const yahoo='https://query1.finance.yahoo.com/v8/finance/chart/';
@@ -148,6 +150,29 @@ const demoTemplates=[
   ['Acquisition','Illustrative example: the company announced a proposed acquisition. Check price, financing and approvals.'],
   ['Investor meeting schedule','Illustrative example: a meeting schedule was filed.']
 ];
+const exchangeFeeds=[
+  ['Online_announcements'],['Integrated_Filing_Financials','Integrated filing · Financial results','Results'],
+  ['Annual_Reports','Annual report','Routine'],['Board_Meetings','Board meeting notice','Routine'],
+  ['Corporate_action','Corporate action','Capital'],['Voting_Results','Voting results','Routine'],
+  ['Shareholding_Pattern','Shareholding pattern','Routine']
+];
+async function rssFilings(refresh){
+  return cached('nse-rss',180000,async()=>{
+    const directory=await loadEquityDirectory();
+    const feeds=await Promise.allSettled(exchangeFeeds.map(async ([name,title,category])=>{
+      const feed=await get('https://nsearchives.nseindia.com/content/RSS/'+name+'.xml');
+      return parseAnnouncementRss(await feed.text(),directory.rows,nseTime,classify,exchangePage,{title,category});
+    }));
+    const usable=feeds.filter(r=>r.status==='fulfilled');
+    if(!usable.length)throw Error('NSE RSS feeds unavailable');
+    const rows=new Map();
+    for(const row of usable.flatMap(r=>r.value)){
+      const key=row.url.startsWith('https://nsearchives.')?row.url:row.id;
+      if(!rows.has(key))rows.set(key,row);
+    }
+    return [...rows.values()];
+  },refresh);
+}
 export async function filings(hours,mode,refresh=false,rssOnly=false) {
   const start=Date.now()-hours*3600000;
   if(mode==='demo') {
@@ -170,23 +195,23 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
     return {mode,scope:'NSE equity announcements returned by the exchange feed',rows:inWindow(rows)};
   } catch(error) {primaryError=error;}
   try{
-    const rows=await cached('nse-rss',180000,async()=>{
-      const [feed,directory]=await Promise.all([get('https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml'),loadEquityDirectory()]);
-      return parseAnnouncementRss(await feed.text(),directory.rows,nseTime,classify,exchangePage);
-    },refresh);
-    return {mode,scope:'NSE recent announcements RSS',coverageNote:'The primary feed is unavailable. This fallback shows recent RSS entries matched to NSE company names. It may cover less than your selected window.',rows:inWindow(rows)};
+    const rows=await rssFilings(refresh);
+    return {mode,scope:'NSE recent announcements and filing feeds',coverageNote:'The full exchange endpoint is unavailable. Recent official RSS filings and previously collected disclosures are shown. Coverage can be shorter than the selected window.',rows:inWindow(rows)};
   }catch{return {mode,scope:'NSE equity feed unavailable',error:primaryError.message,rows:[]};}
 }
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
 const known={
   INFY:[
+    {type:'Results release',label:'Infosys Q2 FY2027 financial snapshot',url:infosys+'/about/last-quarter.html'},
     {type:'Annual report',label:'Infosys FY2025–26 integrated annual report',url:infosys+'/investors/reports-filings/annual-report/annual/documents/infosys-ar-26.pdf'},
     {type:'Annual report',label:'Infosys FY2025–26 integrated annual report (HTML)',url:infosys+'/investors/reports-filings/annual-report/annual-reports/ar-2025-26.html'},
     {type:'Earnings call',label:'Infosys Q2 FY2027 earnings call',url:infosys+'/investors/reports-filings/quarterly-results/2026-2027/q2/documents/transcripts/earningscall.pdf'},
     {type:'Earnings call',label:'Infosys Q4 FY2026 earnings call filed with SEC',url:sec+'1067491/000106749126000018/exv99w05.htm'}
   ],
   TCS:[
+    {type:'Results release',label:'TCS Q2 FY2027 earnings release',url:'https://www.tcs.com/who-we-are/newsroom/press-release/tcs-financial-results-q2-fy-2027'},
+    {type:'Annual report',label:'TCS FY2025–26 integrated annual report',url:'https://www.tcs.com/content/dam/tcs/investor-relations/financial-statements/2025-26/ar/annual-report-2025-2026.pdf'},
     {type:'Annual report',label:'TCS FY2024–25 integrated annual report',url:'https://www.tcs.com/content/dam/tcs/investor-relations/financial-statements/2024-25/ar/annual-report-2024-2025.pdf'},
     {type:'Earnings call',label:'TCS Q4 FY2025 earnings call',url:'https://www.tcs.com/content/dam/tcs/investor-relations/financial-statements/2024-25/q4/Management%20Commentary/Transcript%20of%20the%20Q4%202024-25%20Earnings%20Conference%20Call%20held%20at%201900%20hrs%20IST%20on%20Apr%2010%2C%202025.pdf'}
   ]
@@ -240,13 +265,14 @@ export async function statements(symbol,refresh) {
 }
 const filingURL=(cik,accession)=>sec+Number(cik)+'/'+accession.replaceAll('-','')+'/'+accession+'-index.htm';
 export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
+  const indexed=filingIndex.companies[symbol]?.filings??[];
   const listing=await cached('nse-results:'+symbol,3600000,async()=>{
     const url=nse+'/api/integrated-filing-results?index=equities&symbol='+encodeURIComponent(symbol);
     const body=await (await get(url,nseHeaders)).json();
     if(!Array.isArray(body.data))throw Error('Unexpected quarterly results response');
     return body.data;
-  },refresh);
-  const candidates=listing.filter(r=>r.symbol===symbol&&/financial/i.test(r.type??'')&&
+  },refresh).catch(()=>[]);
+  const candidates=[...new Map([...listing,...indexed].map(row=>[row.xbrl,row])).values()].filter(r=>r.symbol===symbol&&/financial/i.test(r.type??'')&&
     /^https:\/\/nsearchives\.nseindia\.com\/corporate\/xbrl\/[\w.-]+\.xml$/i.test(r.xbrl??''))
     .map(r=>({...r,period:nseTime(r.qe_Date+' 00:00:00'),filed:nseTime(r.revised_Date??r.broadcast_Date??r.creation_Date)}))
     .filter(r=>r.period<=asOf&&r.filed<=asOf+3*86400000)
@@ -254,24 +280,28 @@ export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
   const chosen=candidates[0];
   if(!chosen)return null;
   const unique=[...new Map(candidates.filter(row=>row.consolidated===chosen.consolidated).reverse().map(row=>[row.period,row])).values()].reverse();
-  const selected=unique.filter(row=>(chosen.period-row.period)/86400000<=380).slice(0,5);
+  const recent=unique.filter(row=>(chosen.period-row.period)/86400000<=380).slice(0,5);
+  const earlierYearEnds=unique.filter(row=>!recent.includes(row)&&new Date(row.period+19800000).getUTCMonth()===2).slice(0,2);
+  const selected=[...recent,...earlierYearEnds];
   const results=await Promise.allSettled(selected.map(async (filing,i)=>{
     const periods=await cached('nse-result-xml:'+filing.xbrl,86400000,async()=>{
       const response=await get(filing.xbrl,{}, {redirect:'error',signal:AbortSignal.timeout(11000)});
       if(Number(response.headers.get('content-length'))>15000000)throw Error('Results filing exceeds size limit');
       const body=await response.text();
       if(body.length>15000000)throw Error('Results filing exceeds size limit');
-      return parseNseQuarterly(body);
+      return parseNseQuarterly(body,true);
     },refresh&&i===0);
     const end=dateIST(new Date(filing.period));
-    const current=periods.find(row=>row.end===end);
+    const current=periods.quarters.find(row=>row.end===end);
     if(!current)return null;
     const source=filing.ixbrl?.startsWith('https://nsearchives.nseindia.com/')?filing.ixbrl:filing.xbrl;
-    return {...current,source};
+    return {current:{...current,source},years:periods.years.map(year=>({...year,source}))};
   }));
-  const matching=results.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);
-  if(matching[0]?.end!==dateIST(new Date(chosen.period)))return null;
-  return {quarterly:quarterlyComparison(matching),periods:matching,currency:'INR',source:matching[0].source,basis:chosen.consolidated??'Reported',note:'Reported NSE figures. The EBITDA proxy, where available, adds finance costs and depreciation to profit before tax. Changes use comparable positive baselines.'};
+  const read=results.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);
+  const matching=read.map(row=>row.current).filter(row=>(chosen.period-Date.parse(row.end+'T00:00:00+05:30'))/86400000<=380);
+  const years=[...new Map(read.flatMap(row=>row.years).reverse().map(year=>[year.end,year])).values()].sort((a,b)=>b.end.localeCompare(a.end));
+  if(!matching.length)return null;
+  return {quarterly:quarterlyComparison(matching),years,periods:matching,currency:'INR',source:matching[0].source,basis:chosen.consolidated??'Reported',note:'Reported NSE figures. The EBITDA proxy, where available, adds finance costs and depreciation to profit before tax. Changes use comparable positive baselines.'};
 }
 async function discover(symbol,refresh){
   const result=await Promise.allSettled([
@@ -291,7 +321,12 @@ async function discover(symbol,refresh){
         .map(r=>({type:'Earnings call',label:'NSE transcript filing · '+dateIST(new Date(r.timestamp)),url:r.url}));
     },refresh)
   ]);
-  const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...(known[symbol]??[])];
+  const rss=await rssFilings(false).catch(()=>[]);
+  const related=rss.filter(row=>row.symbol===symbol&&/\.pdf$/i.test(row.url)).flatMap(row=>{
+    const type=/transcript/i.test(row.title+' '+row.detail)?'Earnings call':row.title==='Annual report'?'Annual report':null;
+    return type?[{type,label:row.title+' · '+dateIST(new Date(row.timestamp)),url:row.url}]:[];
+  });
+  const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
   return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
 async function document(source,refresh){
@@ -328,7 +363,7 @@ async function document(source,refresh){
 function passages(text='',type){
   if(type==='Management') return text.slice(0,18000);
   const call=type==='Earnings call';
-  const windows=[text.slice(0,call?15000:3500)];
+  const windows=[text.slice(0,call||type==='Results release'?13000:3500)];
   const topics=call?[/revenue growth guidance/i,/operating margin guidance/i,/capital expenditure|\bcapex\b/i,/cash conversion|free cash flow/i]:
     [/management discussion/i,/business overview|business highlights/i,/segment revenue|revenue mix/i,/consolidated statements of profit/i,/operating cash flow|cash flows/i,/borrowings|working capital/i,/risk management/i];
   for(const pattern of topics){
@@ -338,29 +373,54 @@ function passages(text='',type){
   return windows.join('\n…\n');
 }
 export async function research(symbol, mode, refresh=false) {
-  const [price, annual, discovered, results]=await Promise.all([
+  const [price, secAnnual, discovered, results, directory]=await Promise.all([
     quote(symbol,mode,refresh),
     mode==='live'?statements(symbol,refresh).catch(()=>null):null,
     mode==='live'?discover(symbol,refresh):known[symbol]??[],
-    mode==='live'?nseQuarterly(symbol,refresh).catch(()=>null):null
+    mode==='live'?nseQuarterly(symbol,refresh).catch(()=>null):null,
+    mode==='live'?loadEquityDirectory():null
   ]);
+  const years=results?.years?.filter(row=>!row.bank).map(row=>({
+    end:row.end,revenue:row.revenue,income:row.income,equity:row.balance?.equity,
+    cash:row.cashFlow?.amount,source:row.source
+  }))??[];
+  const annual=secAnnual??(years.length?{
+    currency:'INR',years,source:years[0].source,basis:'NSE annual-period filings',
+    ratios:{...fundamentals(years[0],years[1]??{}),cashConversion:Number.isFinite(years[0].cash)&&years[0].income>0?years[0].cash/years[0].income:null}
+  }:null);
   const types=[...new Set(discovered.map(s=>s.type))];
   const docs=await Promise.all(types.map(async type=>{
     const candidates=discovered.filter(s=>s.type===type);
     if(mode==='demo') return {...candidates[0],status:'Reference link only in sample mode'};
-    let first;
-    for(const source of candidates.slice(0,5)){
-      const doc=await document(source,refresh).catch(()=>({...source,status:'Fetch unavailable'}));
-      first??=doc;
-      if(doc.text) return doc;
-    }
-    return first;
+    const fetchSource=source=>document(source,refresh).catch(()=>({...source,status:'Fetch unavailable'}));
+    const primary=await Promise.all(candidates.slice(0,2).map(fetchSource));
+    if(primary.some(doc=>doc.text))return primary.find(doc=>doc.text);
+    const fallback=await Promise.all(candidates.slice(2,5).map(fetchSource));
+    return fallback.find(doc=>doc.text)??primary[0];
   }));
+  if(results?.quarterly){
+    const q=results.quarterly;
+    const values=q.rows.filter(row=>Number.isFinite(row.value)).map(row=>row.label+' '+row.value+' INR');
+    docs.push({type:'Financial filing',label:'NSE reported results · '+q.period,url:results.source,status:'Structured filing read',
+      text:'Quarter ended '+q.period+'. '+results.basis+'. '+values.join('; ')+'.'});
+  }
+  if(annual?.years.length){
+    const values=annual.years.map(year=>year.end+' reported revenue '+year.revenue+' '+annual.currency+
+      (Number.isFinite(year.income)?', reported profit '+year.income+' '+annual.currency:''));
+    docs.push({type:'Annual financial facts',label:'Annual filed financial statements',url:annual.source,status:'Structured filing read',
+      text:values.join('; ')+'.'});
+  }
+  const company=directory?.rows.find(row=>row.symbol===symbol);
+  const insights=mode==='live'?reportInsights(docs,annual,results,guidanceScorecard(symbol)):[];
+  if(company){
+    const sector=catalog.find(row=>row.symbol===symbol)?.sector;
+    insights[0].note=company.name+' trades on the NSE as '+symbol+(sector?' and is tracked in the '+sector.toLowerCase()+' sector by FINN.':'.');
+  }
   const guidance=mode==='live'?guidanceScorecard(symbol):null;
   const readable=docs.flatMap((s,i)=>s.text?[{citation:i+1,type:s.type,evidence:s.text}]:[]);
   const key=process.env.GEMINI_API_KEY?.trim();
   const model=process.env.GEMINI_MODEL?.trim()||DEFAULT_GEMINI_MODEL;
-  const out={symbol,mode,createdAt:new Date().toISOString(),price,annual,results,guidance,sources:docs.map(({text,...source})=>source),insights:mode==='live'?reportInsights(docs,annual,results,guidance):[],narrative:null,aiStatus:mode==='demo'?'Sample prices. Live mode retrieves primary documents.':readable.length?'Source highlights are available. Set GEMINI_API_KEY to enable the Gemini brief.':'Readable primary documents were unavailable for this request.'};
+  const out={symbol,mode,createdAt:new Date().toISOString(),price,annual,results,guidance,sources:docs.map(({text,...source})=>source),insights,company,coverage:{financials:Boolean(results||annual),documents:readable.length,market:Boolean(price.date)},narrative:null,aiStatus:mode==='demo'?'Sample prices. Live mode retrieves primary documents.':readable.length?'Source highlights are available. Set GEMINI_API_KEY to enable the Gemini brief.':'Readable primary documents were unavailable for this request.'};
   if(mode==='live'&&key&&readable.length){
     const payload=geminiPayload(symbol,readable,model);
     try {

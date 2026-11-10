@@ -10,7 +10,7 @@ Requires Node.js 22.13 or later. The sample workspace runs without packages or c
 npm start
 ```
 
-Open [FINN locally](http://127.0.0.1:4173), create an account with a test email and a password of at least eight characters, and select **Briefing → Run live briefing**. Next, open **Research**, run INFY, save the report, and recheck it under **Saved**. Keep the terminal running while using the local app. Use the browser menu to install the app when supported.
+Open [FINN locally](http://127.0.0.1:4173), create an account with a test email and a password of at least eight characters, and select **Briefing → Refresh briefing**. Next, open **Research**, run INFY, save the report, and recheck it under **Saved**. Keep the terminal running while using the local app. Use the browser menu to install the app when supported.
 
 Run `npm test` for the calculation, CSV, calendar and report comparison tests plus a loopback integration test. The test starts a temporary local server and checks that separate accounts cannot read each other's saved reports or inherit portfolio changes. It also verifies the PWA assets. The test environment must permit loopback connections.
 
@@ -47,3 +47,11 @@ Seed holdings, cost basis and market-cap labels are illustrative. The live Brief
 Broker import is feasible. Upstox documents an OAuth authorization-code flow and a long-term holdings endpoint with ISIN, symbol, quantity, and average price. Zerodha Kite Connect uses a request-token exchange and access tokens that expire by the next morning. A follow-on would start with a one-time, read-only import and account-bound OAuth state, verify holdings by ISIN and exchange, preview the replacement, and avoid retaining tokens beyond the import. CSV works immediately without broker credentials. [Upstox authentication](https://upstox.com/developer/api-documentation/authentication/) · [Upstox holdings](https://upstox.com/developer/api-documentation/get-holdings/) · [Kite login](https://www.kite.trade/docs/connect/v3/user/)
 
 See [Deploy and submit](SUBMISSION.md), [Deployment reference](DEPLOYMENT.md), [Build history](BUILD_HISTORY.md), and [Covering note](COVERING_NOTE.md).
+
+
+### Live data and refresh budget
+
+- Sign in with the email and password you registered, or continue as a guest for a 24-hour private session. On the free Render service, SQLite storage is ephemeral. A restart or deploy can reset accounts, saved reports, and cached briefings. Set FINN_DB to a durable mounted path on a host with persistent storage for durable accounts.
+- The shared briefing snapshot is refreshed at 08:55 and 16:00 Asia/Kolkata on NSE trading days, with special sessions taken from the verified calendar. Opening a view reuses the saved data for the current slot. If the server slept through a slot, the first visit catches up on the latest slot. An empty cache is initialized on first use. **Refresh briefing** explicitly updates the snapshot. Push delivery requires Web Push setup and the server to be awake during the schedule windows. Free Render can sleep through them.
+- Briefing uses the official NSE announcement endpoint and falls back to multiple NSE RSS feeds, retaining recently collected filings for up to seven days. RSS has partial coverage. World news ranks official releases by India market relevance and recency. Scheduled briefing and news use no Gemini calls.
+- Research uses live NSE filing discovery and a dated local index of verified official links for the sample companies when NSE discovery is blocked. The index only stores links and dates. FINN still fetches source documents and computes ratios locally. Gemini runs on demand and identical evidence is cached for 24 hours in the running server. Coverage depends on readable filings and transcripts. The TCS logo comes from its official media kit. Other issuers use ticker monograms.

@@ -22,14 +22,15 @@ export function reportInsights(docs,annual,results,guidance){
   const outlook=excerpt(call,/guidance|target(?:s|ing)?|expect.*(?:margin|growth|capital expenditure|capex)/i);
   const risk=excerpt(ar,/risk|uncertain|competition|exposure/i);
   const fmt=value=>Number(value.toFixed(1));
-  const sales=results?.quarterly?.rows.find(r=>r.label==='Revenue');
+  const sales=results?.quarterly?.rows.find(r=>['Revenue','Total income'].includes(r.label));
   const pat=results?.quarterly?.rows.find(r=>r.label==='Profit after tax');
   const recent=results?.periods?.[0], balance=recent?.balance, cashFlow=recent?.cashFlow;
   const crore=value=>'₹'+fmt(value/10000000).toLocaleString('en-IN')+' crore';
-  const quarterNote=Number.isFinite(sales?.value)?'Quarter ended '+results.quarterly.period+': revenue '+crore(sales.value)+(Number.isFinite(pat?.value)?', profit after tax '+crore(pat.value)+(sales.value>0?', PAT margin '+fmt(100*pat.value/sales.value)+'%':''):'')+'.'+(Number.isFinite(sales.yoy)?' Revenue changed '+fmt(sales.yoy)+'% year over year.':''):null;
+  const quarterNote=Number.isFinite(sales?.value)?'Quarter ended '+results.quarterly.period+': '+sales.label.toLowerCase()+' '+crore(sales.value)+(Number.isFinite(pat?.value)?', profit after tax '+crore(pat.value)+(sales.value>0?', profit / '+sales.label.toLowerCase()+' '+fmt(100*pat.value/sales.value)+'%':''):'')+'.'+(Number.isFinite(sales.yoy)?' Revenue changed '+fmt(sales.yoy)+'% year over year.':''):null;
   const borrowing=Number.isFinite(balance?.current)&&Number.isFinite(balance?.noncurrent)?balance.current+balance.noncurrent:null;
   const workingCapital=Number.isFinite(balance?.currentAssets)&&Number.isFinite(balance?.currentLiabilities)?balance.currentAssets-balance.currentLiabilities:null;
-  const reportedBalance=Number.isFinite(balance?.equity)?'As of '+recent.end+', equity was '+crore(balance.equity)+(Number.isFinite(borrowing)?' and tagged borrowings were '+crore(borrowing)+(balance.equity>0?' ('+fmt(borrowing/balance.equity)+'× equity)':''):'')+(Number.isFinite(workingCapital)?'. Net working capital was '+crore(workingCapital):'')+'.':null;
+  const bankBalance=Number.isFinite(balance?.deposits)?'As of '+recent.end+', deposits were '+crore(balance.deposits)+(Number.isFinite(balance.borrowings)?' and borrowings were '+crore(balance.borrowings):'')+'.':null;
+  const reportedBalance=bankBalance??(Number.isFinite(balance?.equity)?'As of '+recent.end+', equity was '+crore(balance.equity)+(Number.isFinite(borrowing)?' and tagged borrowings were '+crore(borrowing)+(balance.equity>0?' ('+fmt(borrowing/balance.equity)+'× equity)':''):'')+(Number.isFinite(workingCapital)?'. Net working capital was '+crore(workingCapital):'')+'.':null);
   const reportedCash=Number.isFinite(cashFlow?.amount)?'Reported operating cash flow was '+crore(cashFlow.amount)+' from '+cashFlow.start+' through '+recent.end+'.':null;
   const days=(end,start)=>(Date.parse(end)-Date.parse(start))/86400000;
   const comparableCash=reportedCash?results.periods.find(p=>p.cashFlow&&Number.isFinite(p.cashFlow.amount)&&
@@ -61,14 +62,15 @@ export function quarterlyComparison(periods){
   const previous=periods.find(p=>distance(latest.end,p.end)>=75&&distance(latest.end,p.end)<=105);
   const priorYear=periods.find(p=>distance(latest.end,p.end)>=350&&distance(latest.end,p.end)<=380);
   const change=(current,prior)=>Number.isFinite(current)&&Number.isFinite(prior)&&prior>0?100*(current/prior-1):null;
-  const ebitda=Number.isFinite(latest.ebitda)?['ebitda','EBITDA']:['ebitdaProxy','EBITDA proxy'];
+  const ebitda=latest.bank?[]:[Number.isFinite(latest.ebitda)?['ebitda','EBITDA']:['ebitdaProxy','EBITDA proxy']];
   return {period:latest.end,previous:previous?.end,priorYear:priorYear?.end,rows:[
-    ['revenue','Revenue'],ebitda,['pbt','Profit before tax'],['income','Profit after tax']
+    ['revenue',latest.bank?'Total income':'Revenue'],...ebitda,['pbt','Profit before tax'],['income','Profit after tax']
   ].map(([key,label])=>({label,value:latest[key]??null,qoq:change(latest[key],previous?.[key]),yoy:change(latest[key],priorYear?.[key])}))};
 }
 
-export function parseNseQuarterly(xml){
-  const periods=new Map();
+export function parseNseQuarterly(xml,includeAnnual=false){
+  const periods=new Map(), annualPeriods=new Map();
+  const bank=/IntegratedFinance_Banking|IFBanking/.test(xml);
   const balances=new Map(), cashFlows=new Map();
   const tag=(text,name)=>new RegExp('<(?:[\\w.-]+:)?'+name+'\\b[^>]*>([^<]+)</(?:[\\w.-]+:)?'+name+'>','i').exec(text)?.[1].trim();
   const attr=(text,name)=>new RegExp('\\b'+name+'=["\']([^"\']+)["\']','i').exec(text)?.[1];
@@ -91,7 +93,8 @@ export function parseNseQuarterly(xml){
     DepreciationDepletionAndAmortisationExpense:'depreciation',
     EarningsBeforeInterestTaxDepreciationAndAmortisation:'ebitda'
   };
-  const balanceFields={Equity:'equity',BorrowingsCurrent:'current',BorrowingsNoncurrent:'noncurrent',CurrentAssets:'currentAssets',CurrentLiabilities:'currentLiabilities'};
+  if(bank)Object.assign(fields,{Income:'revenue',ProfitLossFromOrdinaryActivitiesBeforeTax:'pbt',ProfitLossForThePeriod:'income'});
+  const balanceFields={Deposits:'deposits',Borrowings:'borrowings',Equity:'equity',BorrowingsCurrent:'current',BorrowingsNoncurrent:'noncurrent',CurrentAssets:'currentAssets',CurrentLiabilities:'currentLiabilities'};
   for(const [,field,attributes,value] of xml.matchAll(/<(?:[\w.-]+:)?([A-Za-z]\w*)\b([^>]*\bcontextRef\s*=[^>]*)>\s*(-?\d+(?:\.\d+)?)\s*<\/(?:[\w.-]+:)?\1>/g)){
     const context=contexts.get(attr(attributes,'contextRef'));
     if(!context||!units.has(attr(attributes,'unitRef')))continue;
@@ -109,14 +112,18 @@ export function parseNseQuarterly(xml){
       else if(start===prior.start&&prior.amount!==numeric)prior.amount=null;
     }
     const key=fields[field];
-    if(!key||duration<75||duration>105||!start)continue;
-    const period=periods.get(end)??{end};
+    if(!key||!start)continue;
+    const target=duration>=75&&duration<=105?periods:includeAnnual&&duration>=350&&duration<=380?annualPeriods:null;
+    if(!target)continue;
+    const period=target.get(end)??{end,...(bank?{bank:true}:{})};
     if(key in period&&period[key]!==numeric)period[key]=null;
     else period[key]=numeric;
-    periods.set(end,period);
+    target.set(end,period);
   }
-  return [...periods.values()].filter(period=>Number.isFinite(period.revenue)).map(period=>{
+  const formatPeriods=rows=>[...rows.values()].filter(period=>Number.isFinite(period.revenue)).map(period=>{
     const {pbt,financeCosts,depreciation}=period;
     return {...period,balance:balances.get(period.end),cashFlow:cashFlows.get(period.end),ebitdaProxy:[pbt,financeCosts,depreciation].every(Number.isFinite)?pbt+financeCosts+depreciation:null};
   }).sort((a,b)=>b.end.localeCompare(a.end));
+  const quarters=formatPeriods(periods);
+  return includeAnnual?{quarters,years:formatPeriods(annualPeriods)}:quarters;
 }

@@ -27,12 +27,18 @@ const format=(n,suffix='')=>Number.isFinite(n)?n.toLocaleString('en-IN',{maximum
 const when=value=>new Date(value).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
 const link=(url,label)=>/^https:\/\//.test(url??'')?'<a href="'+escape(url)+'" target="_blank" rel="noopener noreferrer">'+escape(label)+'</a>':'';
 const button=(label,attrs='',style='')=>'<button type="button" class="'+style+'" '+attrs+'>'+label+'</button>';
+const companyLogo=symbol=>{
+  const src=symbol==='TCS'?'/logo-tcs.png':null;
+  return src?'<span class="company-logo"><img src="'+src+'" alt="" decoding="async"></span>':
+    '<span class="company-logo company-monogram" aria-hidden="true">'+escape(symbol.slice(0,2))+'</span>';
+};
+const topicIcon=topic=>'<span class="route-icon news-art">'+icon(topic==='Energy'||topic==='Inflation'?'pulse':topic==='India policy'?'folio':'globe')+'</span>';
 const tag=value=>'<span class="tag">'+escape(value)+'</span>';
 const metric=(label,value)=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(value)+'</strong></div>';
 const panel=(title,body)=>'<section class="panel"><h2>'+title+'</h2>'+body+'</section>';
 const hero=(label,title,detail)=>'<section class="page-heading"><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
 const loading=(label,detail='')=>'<div class="loading" role="status"><span class="spinner" aria-hidden="true"></span><div><strong>'+escape(label)+'</strong>'+(detail?'<p class="muted">'+escape(detail)+'</p>':'')+'</div></div>';
-let state, report, researchPending, authMode='register', hours=24, timer, generation=0, installPrompt, researchSequence=0;
+let state, report, researchPending, authMode='login', hours=24, timer, generation=0, installPrompt, researchSequence=0;
 const section=()=>['briefing','portfolio','research','saved','settings'].includes(routeParts()[0])?routeParts()[0]:'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
 async function api(path,payload){
@@ -115,11 +121,17 @@ function bindPicker(id,onSelect,onClear=()=>{}){
 }
 function auth(){
   nav.hidden=true; logout.hidden=true;
-  main.innerHTML='<div class="auth"><div class="hero"><p class="eyebrow">YOUR NSE RESEARCH DESK</p><h1>Know what changed.</h1><p class="muted">Track portfolio filings, spot unusual moves, and research companies from primary sources.</p></div>'+panel(authMode==='register'?'Create your workspace':'Welcome back','<form id="auth"><div class="fields"><label>Email<input name="email" type="email" autocomplete="email" maxlength="200" required></label><label>Password<input name="password" type="password" autocomplete="'+(authMode==='register'?'new-password':'current-password')+'" minlength="8" maxlength="128" required></label></div><div class="actions"><button class="primary">'+(authMode==='register'?'Create account':'Sign in')+'</button>'+button(authMode==='register'?'I have an account':'Create an account','id="switch"')+'</div><p class="muted">Each new account starts with a private 18-stock sample portfolio.</p></form>')+'</div>';
+  main.innerHTML='<div class="auth"><div class="hero"><p class="eyebrow">YOUR NSE RESEARCH DESK</p><h1>Know what changed.</h1><p class="muted">Track portfolio filings, spot unusual moves, and research companies from primary sources.</p></div>'+panel(authMode==='register'?'Create your workspace':'Welcome back','<form id="auth"><p id="auth-error" class="error" role="alert"></p><div class="fields"><label>Email<input name="email" type="email" autocomplete="email" maxlength="200" required></label><label>Password<input name="password" type="password" autocomplete="'+(authMode==='register'?'new-password':'current-password')+'" minlength="8" maxlength="128" required></label></div><div class="actions"><button class="primary">'+(authMode==='register'?'Create account':'Sign in')+'</button>'+button(authMode==='register'?'I have an account':'Create an account','id="switch"')+'</div><p class="muted">Each new account starts with a private 18-stock sample portfolio.</p></form><button type="button" id="guest" data-pending="Opening guest workspace…">Continue as guest</button><p class="muted">Guest workspaces expire after 24 hours.</p>')+'</div>';
+  document.querySelector('#guest').onclick=e=>act(e.currentTarget,async()=>{await api('guest',{});state=await api('state');render();});
   document.querySelector('#switch').onclick=()=>{authMode=authMode==='register'?'login':'register';auth();};
   document.querySelector('#auth').onsubmit=e=>{
     e.preventDefault();const data=Object.fromEntries(new FormData(e.target));
-    act(e.submitter,async()=>{await api(authMode,data);state=await api('state');render();});
+    act(e.submitter,async()=>{
+      const error=document.querySelector('#auth-error');
+      error.textContent='';
+      try{await api(authMode,data);state=await api('state');render();}
+      catch(failure){error.textContent=failure.message;}
+    });
   };
 }
 logout.onclick=()=>act(logout,async()=>{
@@ -127,7 +139,7 @@ logout.onclick=()=>act(logout,async()=>{
     const registration=await navigator.serviceWorker?.getRegistration();
     const subscription=await registration?.pushManager.getSubscription();
     if(subscription){await api('subscription',{remove:true,endpoint:subscription.endpoint});await subscription.unsubscribe();}
-  }catch(error){notify('Push cleanup failed: '+error.message);return;}
+  }catch(error){notify('Device notification cleanup failed: '+error.message);}
   await api('logout',{});state=null;report=null;researchPending=null;
   for(const key of Object.keys(dashboard))delete dashboard[key];
   render();
@@ -150,7 +162,7 @@ const briefSource=(key,force=false)=>{
   const cacheKey=key==='feed'?'feed-'+hours:key;
   if(!force&&dashboard[cacheKey]&&Date.now()-dashboard[cacheKey].time<180000)return dashboard[cacheKey].promise;
   const endpoints={feed:'digest?live=1&hours='+hours,moves:'scan?live=1',world:'world-news'};
-  const record={time:Date.now(),promise:api(endpoints[key]+(force&&key!=='world'?'&refresh=1':'')).catch(error=>({error:error.message}))};
+  const record={time:Date.now(),promise:api(endpoints[key]+(force?(endpoints[key].includes('?')?'&':'?')+'refresh=1':'')).catch(error=>({error:error.message}))};
   dashboard[cacheKey]=record;
   return record.promise;
 };
@@ -163,8 +175,8 @@ function moveCard(row){
 function briefing(id){
   const [,view,raw]=routeParts();
   if(view){briefPage(id,view,raw);return;}
-  main.innerHTML=hero('','Briefing','Your portfolio and the global events worth a closer look.')+
-    '<div class="brief-toolbar">'+lookback()+button('Run live briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div>'+
+  main.innerHTML=hero('','Briefing','Snapshots update before the open and after the close on trading days. Refresh any time.')+
+    '<div class="brief-toolbar">'+lookback()+button('Refresh briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div>'+
     '<div id="brief-status" aria-live="polite"></div><div id="brief-cards" class="route-stack"></div>';
   const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), status=document.querySelector('#brief-status');
   const cards=document.querySelector('#brief-cards');
@@ -173,11 +185,12 @@ function briefing(id){
     if(id!==generation)return;
     const lead=world?.items?.[0];
     const newsText=lead?escape(lead.title):world?.error?'News sources unavailable':world?'No new tracked releases':'Checking global sources…';
-    const filings=feed?.error?'Exchange filings temporarily unavailable':feed?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts':'Checking exchange filings…';
-    const moveText=moves?.error?'Price check unavailable':moves?moves.alerts.length+' flagged · '+moves.coverage+' of '+moves.total+' holdings priced':'Open to check completed sessions';
+    const stamp=feed?.checkedAt?' · '+(feed.stale?'Last available ':'Updated ')+escape(when(feed.checkedAt)):'';
+    const filings=feed?.error?'Exchange filings unavailable · try Refresh briefing':feed?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts'+stamp:'Checking exchange filings…';
+    const moveText=moves?.error?'Price check unavailable':moves?moves.alerts.length+' flagged · '+moves.coverage+' of '+moves.total+' holdings priced':'Loading saved market snapshot…';
     const related=feed?.error?'Peer filings temporarily unavailable':feed?new Set([...feed.watch,...feed.related].map(row=>row.id)).size+' recent disclosures':'Watchlist and same-sector activity';
     cards.innerHTML=routeCard('briefing/filings','folio','Portfolio filings',filings)+routeCard('briefing/moves','pulse','Unusual moves',moveText)+
-      routeCard('briefing/world','globe','Global market news',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
+      routeCard('briefing/world','globe','World news for India',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
   }
   update();
   const load=(key,force,selectedHours=hours)=>briefSource(key,force).then(result=>{
@@ -195,15 +208,15 @@ function briefing(id){
     finally{status.replaceChildren();windowSelect.disabled=false;refreshing=false;}
   });
   void load('feed',false);void load('world',false);
-  if(dashboard.moves)void load('moves',false);
+  void load('moves',false);
 }
 function briefPage(id,view,raw){
-  const title={filings:'Portfolio filings',moves:'Unusual moves',peers:'Watchlist and sector peers',world:'Global market news',filing:'Filing details',story:'Market news detail'}[view];
+  const title={filings:'Portfolio filings',moves:'Unusual moves',peers:'Watchlist and sector peers',world:'World news for India',filing:'Filing details',story:'Market news detail'}[view];
   if(!title){location.replace('#briefing');return;}
   const world=view==='world'||view==='story';
   const filing=view==='filing', story=view==='story', moves=view==='moves';
   const parent=filing?(routeParts()[3]==='peers'?'briefing/peers':'briefing/filings'):story?'briefing/world':'briefing';
-  main.innerHTML=back(parent,filing?(parent.endsWith('peers')?'Peer and watchlist filings':'Portfolio filings'):story?'Global market news':'Briefing')+hero('',title,world?'Official global releases with a short explanation of why each can matter for markets.':'')+
+  main.innerHTML=back(parent,filing?(parent.endsWith('peers')?'Peer and watchlist filings':'Portfolio filings'):story?'World news for India':'Briefing')+hero('',title,world?'Official global releases with a short explanation of why each can matter for markets.':'')+
     (!filing&&!story?'<div class="brief-toolbar">'+(!moves&&!world?lookback():'')+button('Refresh','id="brief-refresh" data-pending="Refreshing…"')+'</div>':'')+'<section class="panel" id="brief-detail" aria-live="polite"></section>';
   const target=document.querySelector('#brief-detail');
   let revision=0;
@@ -220,7 +233,7 @@ function briefPage(id,view,raw){
       return;
     }
     if(world){
-      const newsRows=data.items.map(row=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(row.id)+'"><span>'+tag(row.topic)+' <small>'+escape(row.source)+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>').join('');
+      const newsRows=data.items.map(row=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(row.id)+'">'+topicIcon(row.topic)+'<span class="news-copy">'+tag(row.topic)+' <small>'+escape(row.source)+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>').join('');
       if(story){
         const item=data.items.find(row=>encodeURIComponent(row.id)===raw);
         target.innerHTML=item?'<div class="row-head">'+tag(item.topic)+'<small>'+escape(when(item.timestamp))+'</small></div><h2>'+escape(item.title)+'</h2><p class="muted">'+escape(item.source)+'</p><h3>Why investors watch this</h3><p>'+escape(item.why)+'</p>'+link(item.url,'Read the official release ↗'):'<p>This story is outside the current news window.</p>';
@@ -277,7 +290,7 @@ function portfolio(){
     '<div class="brief-toolbar"><a class="button primary" href="#portfolio/edit">'+icon('tune')+' Edit holdings</a><a class="button" href="#portfolio/allocation">'+icon('folio')+' Sector allocation</a></div>'+
     panel('Holdings <small class="count-label">'+state.holdings.length+'</small>',state.holdings.length?'<div class="holdings-list">'+
       '<div class="holding-row holding-head"><span>Company</span><span>Quantity</span><span>Average cost</span></div>'+
-      state.holdings.map(h=>'<div class="holding-row"><button type="button" class="ticker-button holding-company" data-research="'+escape(h.symbol)+'"><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></button><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
+      state.holdings.map(h=>'<div class="holding-row"><button type="button" class="ticker-button holding-company" data-research="'+escape(h.symbol)+'">'+companyLogo(h.symbol)+'<span><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></span></button><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
       '<p class="muted">Your portfolio is empty.</p>');
 }
 function portfolioAllocation(){
@@ -374,15 +387,15 @@ function reportHTML(r,view='all'){
     const analysis=ai?'<p class="section-analysis"><small>Gemini synthesis</small><br>'+escape(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
     return '<article class="insight report-topic"><h3>'+title+'</h3><p class="muted topic-scope">'+scope+'</p>'+
       (s.note&&!(title==='Financial snapshot'&&extra)?'<p>'+escape(s.note)+'</p>':'')+cases+analysis+evidence+extra+
-      (!s.note&&!evidence&&!ai&&!cases&&!extra?'<p class="muted">The available sources did not establish these details.</p>':'')+'</article>';
+      (!s.note&&!evidence&&!ai&&!cases&&!extra?'<p class="muted">No verified disclosure for this section in this run.</p>':'')+'</article>';
   }
   const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
-  const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>'+(r.results.periods[0].bank?'Total income':'Revenue')+' (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const latest=r.results?.periods?.[0];
   const crore=value=>Number.isFinite(value)?format(value/10000000):'—';
   const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+' · ₹ crore</p><div class="metrics">'+
-    metric('Revenue',crore(latest.revenue))+metric('Profit after tax',crore(latest.income))+
-    metric('PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
+    metric(latest.bank?'Total income':'Revenue',crore(latest.revenue))+metric('Profit after tax',crore(latest.income))+
+    metric(latest.bank?'PAT / total income':'PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
     (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
   const overview=
     (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Gemini Flash'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
@@ -399,7 +412,7 @@ function reportHTML(r,view='all'){
     (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+
     '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',format(r.price.fallback?r.price.tradedVolume:r.price.volume,r.price.fallback?'':'×'))+'</div>'+
     (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
-    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>';
+    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">Figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>';
   const outlook=insight('Narrative vs. numbers','Where management commentary agrees or diverges from comparable results.',guidanceHTML(r.guidance))+
     insight('Guidance','Explicit growth, margin, and capex targets with the period they cover.');
   const sources='<div class="report-sources"><h3>Sources and coverage</h3><p class="muted">'+escape(r.aiStatus)+'</p>'+
@@ -413,8 +426,9 @@ function reportHTML(r,view='all'){
 function reportPage(r,base,view,snapshot=false){
   const parent=snapshot?'saved':'research';
   const selected=['overview','financials','outlook','sources'].includes(view)?view:'overview';
-  main.innerHTML=back(parent,snapshot?'Saved reports':'Research')+hero('',escape(r.symbol)+' research',snapshot?'Saved '+escape(when(r.createdAt)):'Company report')+
+  main.innerHTML=back(parent,snapshot?'Saved reports':'Research')+hero('',companyLogo(r.symbol)+escape(r.symbol)+' research',snapshot?'Saved '+escape(when(r.createdAt)):(r.company?.name?escape(r.company.name)+' · Company report':'Company report'))+
     '<div class="report-tabs" aria-label="Report sections">'+[['overview','Overview'],['financials','Financials'],['outlook','Outlook'],['sources','Sources']].map(([key,label])=>'<a href="#'+base+'/'+key+'" '+(selected===key?'aria-current="page"':'')+'>'+label+'</a>').join('')+'</div>'+
+    (r.coverage&&!r.coverage.financials&&!r.coverage.documents?'<p class="coverage-note">Financial filings could not be retrieved for this run. Any available listing and market data are shown below. Try Research again later.</p>':'')+
     '<section class="panel report-view" data-report-base="'+base+'">'+reportHTML(r,selected)+'</section>'+
     '<div class="actions report-actions">'+(snapshot?button('Recheck sources','data-recheck="'+escape(r.id)+'"','primary')+button('Delete report','data-delete="'+escape(r.id)+'"'):
       button('Save report','id="save"','primary')+button(state.watch.includes(r.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(r.symbol)+'"'))+'</div>'+
@@ -436,7 +450,7 @@ function research(id){
   main.innerHTML=(sectorsPage?back('research','Research')+hero('','Sector leaders','Compare adjusted returns over the same trading window.'):
     hero('','Research','Find an NSE company and open a dedicated report.')+
     '<div id="research-progress" aria-live="polite">'+(researchPending?researchLoading(researchPending):'')+'</div>'+
-    panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"','ticker-button')).join('')+'</div>')+
+    panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(companyLogo(s.symbol)+s.symbol,'data-research="'+s.symbol+'"','ticker-button')).join('')+'</div>')+
     '<div class="route-stack">'+(report?routeCard('research/report/overview','mark',escape(report.symbol)+' report','Return to your latest research'):'')+routeCard('research/sectors','pulse','Sector leaders','Compare tracked companies')+'</div>');
   if(!sectorsPage){
     bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
@@ -495,12 +509,12 @@ function settings(){
   const s=state.settings;
   const check=(name,label,enabled)=>'<label class="check"><input name="'+escape(name)+'" type="checkbox" '+(enabled?'checked':'')+'>'+escape(label)+'</label>';
   main.innerHTML=hero('05 / Configure','Your settings','Choose the feed, tune what counts as unusual, and manage browser notifications.')+
-    panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+check('instant','Material filings as detected and EOD threshold alerts',s.instant)+'</details><button class="primary">Save preferences</button></form>')+
+    panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+'</details><button class="primary">Save preferences</button></form>')+
     panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Send test notification','id="test-push" '+(!state.push.enabled?'disabled':''))+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
   document.querySelector('#prefs').onsubmit=e=>{
     e.preventDefault();const f=new FormData(e.target);
     act(e.submitter,async()=>{
-      const payload={mode:f.get('mode'),settings:{price:Number(f.get('price')),volume:Number(f.get('volume')),types:state.categories.filter(c=>f.has(c)),pre:f.has('pre'),post:f.has('post'),instant:f.has('instant')}};
+      const payload={mode:f.get('mode'),settings:{price:Number(f.get('price')),volume:Number(f.get('volume')),types:state.categories.filter(c=>f.has(c)),pre:f.has('pre'),post:f.has('post')}};
       if(payload.mode!==state.mode)report=null;
       Object.assign(state,await api('preferences',payload));render();notify('Preferences saved.');
     });

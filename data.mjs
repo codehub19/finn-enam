@@ -84,13 +84,13 @@ export function validPurchaseDate(value) {
   const parsed=new Date(value+'T00:00:00Z');
   return Number.isFinite(parsed.valueOf())&&parsed.toISOString().slice(0,10)===value;
 }
-export function briefingSlot(now,calendar){
+export function briefingSlot(now,calendar,latest=false){
   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',weekday:'short',hourCycle:'h23'}).formatToParts(now).map(p=>[p.type,p.value]));
   const day=dateIST(now), minute=Number(parts.hour)*60+Number(parts.minute);
   if(!calendar || calendar.year!==Number(day.slice(0,4)) || calendar.holidays.includes(day)) return null;
   const special=calendar.special?.[day];
   if(!special&&['Sat','Sun'].includes(parts.weekday)) return null;
   const {pre,post}=special??{pre:535,post:960};
-  const slot=minute>=pre&&minute<pre+20?'pre':minute>=post&&minute<post+60?'post':null;
+  const slot=minute>=post&&(latest||minute<post+60)?'post':minute>=pre&&(latest||minute<pre+20)?'pre':null;
   return slot?{day,slot}:null;
 }

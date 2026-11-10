@@ -204,3 +204,14 @@ button,.button,nav a{transition:background var(--motion-fast),border-color var(-
 .case-grid{display:grid;gap:.6rem;margin:.45rem 0}
 .case-grid p{padding:.62rem;border:1px solid var(--line);border-radius:8px;margin:0}
 @media(min-width:620px){.allocation-layout{grid-template-columns:minmax(9rem,15rem) minmax(0,1fr)}.case-grid{grid-template-columns:1fr 1fr}}
+
+.company-logo{display:inline-grid;place-items:center;width:2rem;height:2rem;flex:0 0 2rem;border-radius:.55rem;background:#f3f6f8;color:#203749;vertical-align:middle;margin-inline-end:.45rem;overflow:hidden}
+.company-logo img{display:block;width:88%;height:75%;object-fit:contain}
+.company-monogram{background:var(--lift);color:var(--accent);font-size:.68rem;font-weight:800;letter-spacing:.04em}
+.holding-company{display:flex;align-items:center;gap:.1rem;min-width:0}
+.holding-company>span:last-child{min-width:0}
+.holding-company .company-logo{grid-row:auto}
+.ticker-button:not(.holding-company) .company-logo{width:1.35rem;height:1.35rem;margin-inline-end:.32rem}
+.news-art{flex:none;margin-inline-end:.55rem}
+.news-copy{flex:1;min-width:0}
+#auth-error:empty{display:none}

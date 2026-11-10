@@ -108,7 +108,7 @@ const briefingFilings=(refresh,slot)=>snapshot('filings',async()=>{
     if(row.timestamp<cutoff)continue;
     rows.set(row.url.startsWith('https://nsearchives.')?row.url:row.id,row);
   }
-  return {...current,rows:[...rows.values()],checkedAt:new Date().toISOString()};
+  return {...current,rows:[...rows.values()],checkedAt:current.checkedAt??new Date().toISOString()};
 },refresh,slot);
 const briefingNews=(refresh,slot)=>snapshot('world',async()=>({...await worldNews(refresh),checkedAt:new Date().toISOString()}),refresh,slot);
 const briefingQuote=(symbol,refresh,slot)=>snapshot('quote:'+symbol,()=>quote(symbol,'live',refresh),refresh,slot);
@@ -140,7 +140,7 @@ async function scan(data,todayOnly=false,refresh=false){
     return {...row,reasons,ratios,flags,fundamentalSource:annual?.source};
   });
   const priced=results.filter(r=>r.date&&(!todayOnly||r.date===dateIST()));
-  return {alerts:checks,coverage:priced.length,archiveCoverage:priced.filter(row=>row.fallback).length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
+  return {alerts:checks,coverage:priced.length,archiveCoverage:priced.filter(row=>row.fallback).length,staleCoverage:priced.filter(row=>row.stale).length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',

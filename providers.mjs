@@ -6,6 +6,7 @@ import {guidanceScorecard} from './guidance.mjs';
 import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections} from './gemini.mjs';
 import {parseDailyReport,parseAnnouncementRss} from './exchange.mjs';
 
+const verified=JSON.parse(await readFile(new URL('./config/verified-baseline.json',import.meta.url),'utf8'));
 const filingIndex=JSON.parse(await readFile(new URL('./config/nse-filing-index.json',import.meta.url),'utf8'));
 const nse='https://www.nseindia.com';
 const exchangePage=nse+'/companies-listing/corporate-filings-announcements';
@@ -45,7 +46,7 @@ async function loadEquityDirectory(){
   try {
     if(Date.now()<directoryRetryAt) throw Error('NSE directory retry is pending');
     rows=await cached('nse-equities',86400000,async()=>{
-      const response=await get(equityDirectory);
+      const response=await archive(equityDirectory);
       const listed=parseEquityDirectory(await response.text());
       if(!listed.length) throw Error('Empty NSE equity directory');
       lastDirectory=listed;
@@ -76,6 +77,13 @@ export async function searchEquities(query) {
 const priorDate=(days)=>new Date(Date.now()-days*86400000);
 const keyDate=(day)=>day.split('-').reverse().join('-');
 const nseHeaders={'User-Agent':'Mozilla/5.0','Referer':exchangePage,'Accept':'application/json'};
+async function archive(url,headers={},options={}){
+  try{return await get(url,headers,options);}
+  catch(error){
+    if(!url.startsWith('https://nsearchives.nseindia.com/'))throw error;
+    return get(url.replace('https://nsearchives.nseindia.com/','https://archives.nseindia.com/'),headers,options);
+  }
+}
 const cutoffIST=()=>new Date().toLocaleTimeString('en-GB',{timeZone:'Asia/Kolkata',hour12:false});
 const reportsPage='https://www.nseindia.com/all-reports';
 let yahooRetryAt=0;
@@ -85,7 +93,7 @@ async function exchangeClose(today,afterClose){
       const dates=[offset,offset+1,offset+2].filter(i=>i<8).map(i=>dateIST(priorDate(i)));
       const reports=await Promise.allSettled(dates.map(async day=>{
         const file='https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_'+day.replaceAll('-','')+'_F_0000.csv.zip';
-        const response=await get(file);
+        const response=await archive(file);
         return {quotes:parseDailyReport(Buffer.from(await response.arrayBuffer()),day),file};
       }));
       const latest=reports.find(report=>report.status==='fulfilled');
@@ -101,7 +109,8 @@ export async function quote(symbol, mode, refresh=false) {
   try {
     return await cached('price:'+symbol+':'+today+':'+afterClose,1800000,async()=>{
       if(Date.now()<yahooRetryAt)throw Error('Yahoo Finance rate limit');
-      const response=await get(yahoo+encodeURIComponent(symbol+'.NS')+'?interval=1d&range=2y');
+      const url=yahoo+encodeURIComponent(symbol+'.NS')+'?interval=1d&range=2y';
+      const response=await get(url).catch(()=>get(url.replace('query1.','query2.')));
       const entry=(await response.json()).chart.result?.[0];
       if(!entry) throw Error('Price history unavailable');
       const q=entry.indicators.quote[0], adj=entry.indicators.adjclose?.[0]?.adjclose;
@@ -117,6 +126,9 @@ export async function quote(symbol, mode, refresh=false) {
       const row=quotes.get(symbol);
       if(row)return {mode,source:reportsPage,archive:file,fallback:true,...row,volume:null,coverageNote:'NSE reported close and prior close. Adjusted return history and the 20-session volume baseline are unavailable.'};
     }catch{}
+    const saved=verified.quotes[symbol];
+    if(saved&&Date.now()-Date.parse(saved.date)<8*86400000)return {...saved,stale:true,
+      coverageNote:'Last verified completed session from the '+verified.checkedAt.slice(0,10)+' fallback snapshot.'};
     return {mode,source,error:error.message};
   }
 }
@@ -160,7 +172,7 @@ async function rssFilings(refresh){
   return cached('nse-rss',180000,async()=>{
     const directory=await loadEquityDirectory();
     const feeds=await Promise.allSettled(exchangeFeeds.map(async ([name,title,category])=>{
-      const feed=await get('https://nsearchives.nseindia.com/content/RSS/'+name+'.xml');
+      const feed=await archive('https://nsearchives.nseindia.com/content/RSS/'+name+'.xml');
       return parseAnnouncementRss(await feed.text(),directory.rows,nseTime,classify,exchangePage,{title,category});
     }));
     const usable=feeds.filter(r=>r.status==='fulfilled');
@@ -196,8 +208,16 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
   } catch(error) {primaryError=error;}
   try{
     const rows=await rssFilings(refresh);
+    if(!rows.length)throw Error('No usable recent NSE entries');
     return {mode,scope:'NSE recent announcements and filing feeds',coverageNote:'The full exchange endpoint is unavailable. Recent official RSS filings and previously collected disclosures are shown. Coverage can be shorter than the selected window.',rows:inWindow(rows)};
-  }catch{return {mode,scope:'NSE equity feed unavailable',error:primaryError.message,rows:[]};}
+  }catch{
+    if(Date.now()-Date.parse(verified.checkedAt)<168*3600000)return {
+      mode,scope:'Last verified NSE filing snapshot',checkedAt:verified.checkedAt,stale:true,
+      coverageNote:'Live exchange feeds are unavailable. Showing the archived NSE filings collected on '+verified.checkedAt.slice(0,10)+'.',
+      rows:inWindow(verified.filings)
+    };
+    return {mode,scope:'NSE equity feed unavailable',error:primaryError.message,rows:[]};
+  }
 }
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
@@ -278,14 +298,18 @@ export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
     .filter(r=>r.period<=asOf&&r.filed<=asOf+3*86400000)
     .sort((a,b)=>b.period-a.period||Number(b.consolidated==='Consolidated')-Number(a.consolidated==='Consolidated')||b.filed-a.filed);
   const chosen=candidates[0];
-  if(!chosen)return null;
+  const saved=verified.results[symbol];
+  const fallback=()=>saved&&Date.parse(saved.quarterly.period)<=asOf?{
+    ...saved,stale:true,note:'Reported NSE figures from the verified '+verified.checkedAt.slice(0,10)+' snapshot. Live filing verification was unavailable.'
+  }:null;
+  if(!chosen)return fallback();
   const unique=[...new Map(candidates.filter(row=>row.consolidated===chosen.consolidated).reverse().map(row=>[row.period,row])).values()].reverse();
   const recent=unique.filter(row=>(chosen.period-row.period)/86400000<=380).slice(0,5);
   const earlierYearEnds=unique.filter(row=>!recent.includes(row)&&new Date(row.period+19800000).getUTCMonth()===2).slice(0,2);
   const selected=[...recent,...earlierYearEnds];
   const results=await Promise.allSettled(selected.map(async (filing,i)=>{
     const periods=await cached('nse-result-xml:'+filing.xbrl,86400000,async()=>{
-      const response=await get(filing.xbrl,{}, {redirect:'error',signal:AbortSignal.timeout(11000)});
+      const response=await archive(filing.xbrl,{}, {redirect:'error',signal:AbortSignal.timeout(11000)});
       if(Number(response.headers.get('content-length'))>15000000)throw Error('Results filing exceeds size limit');
       const body=await response.text();
       if(body.length>15000000)throw Error('Results filing exceeds size limit');
@@ -300,7 +324,7 @@ export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
   const read=results.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);
   const matching=read.map(row=>row.current).filter(row=>(chosen.period-Date.parse(row.end+'T00:00:00+05:30'))/86400000<=380);
   const years=[...new Map(read.flatMap(row=>row.years).reverse().map(year=>[year.end,year])).values()].sort((a,b)=>b.end.localeCompare(a.end));
-  if(!matching.length)return null;
+  if(!matching.length)return fallback();
   return {quarterly:quarterlyComparison(matching),years,periods:matching,currency:'INR',source:matching[0].source,basis:chosen.consolidated??'Reported',note:'Reported NSE figures. The EBITDA proxy, where available, adds finance costs and depreciation to profit before tax. Changes use comparable positive baselines.'};
 }
 async function discover(symbol,refresh){
@@ -331,7 +355,7 @@ async function discover(symbol,refresh){
 }
 async function document(source,refresh){
   return cached('document:'+source.url,86400000,async()=>{
-    const response=await get(source.url,{'User-Agent':source.url.includes('sec.gov/')?(process.env.SEC_USER_AGENT||'FINN research prototype'):'Mozilla/5.0',Accept:'application/pdf,text/html;q=0.9'},{redirect:'error',signal:AbortSignal.timeout(20000)});
+    const response=await archive(source.url,{'User-Agent':source.url.includes('sec.gov/')?(process.env.SEC_USER_AGENT||'FINN research prototype'):'Mozilla/5.0',Accept:'application/pdf,text/html;q=0.9'},{redirect:'error',signal:AbortSignal.timeout(20000)});
     const size=Number(response.headers.get('content-length'));
     if(size>25000000) throw Error('Document exceeds size limit');
     const chunks=[];
@@ -401,7 +425,7 @@ export async function research(symbol, mode, refresh=false) {
   if(results?.quarterly){
     const q=results.quarterly;
     const values=q.rows.filter(row=>Number.isFinite(row.value)).map(row=>row.label+' '+row.value+' INR');
-    docs.push({type:'Financial filing',label:'NSE reported results · '+q.period,url:results.source,status:'Structured filing read',
+    docs.push({type:'Financial filing',label:'NSE reported results · '+q.period,url:results.source,status:results.stale?'Verified snapshot':'Structured filing read',
       text:'Quarter ended '+q.period+'. '+results.basis+'. '+values.join('; ')+'.'});
   }
   if(annual?.years.length){

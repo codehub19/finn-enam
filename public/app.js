@@ -228,6 +228,7 @@ function briefPage(id,view,raw){
     if(data.error){target.innerHTML='<p class="error">'+escape(data.error)+'</p>';return;}
     if(moves){
       target.innerHTML='<p class="muted">'+data.coverage+' of '+data.total+' holdings priced'+(data.asOf?' · Latest session '+escape(data.asOf):'')+'.</p>'+
+        (data.staleCoverage?'<p class="coverage-note">'+data.staleCoverage+' prices came from the last verified snapshot.</p>':'')+
         (data.archiveCoverage?'<p class="coverage-note">'+data.archiveCoverage+' from NSE daily reports, without a 20-session volume comparison.</p>':'')+
         (data.alerts.map(moveCard).join('')||'<p class="muted">'+(data.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
       return;
@@ -393,7 +394,7 @@ function reportHTML(r,view='all'){
   const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>'+(r.results.periods[0].bank?'Total income':'Revenue')+' (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const latest=r.results?.periods?.[0];
   const crore=value=>Number.isFinite(value)?format(value/10000000):'—';
-  const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+' · ₹ crore</p><div class="metrics">'+
+  const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+(r.results.stale?' · Verified snapshot':'')+' · ₹ crore</p><div class="metrics">'+
     metric(latest.bank?'Total income':'Revenue',crore(latest.revenue))+metric('Profit after tax',crore(latest.income))+
     metric(latest.bank?'PAT / total income':'PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
     (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
@@ -406,7 +407,7 @@ function reportHTML(r,view='all'){
     insight('Trajectory','Multi-year growth and margin expansion or compression.',trends)+
     insight('Balance sheet','Debt, leverage, funding structure, and working-capital cycle.')+
     insight('Cash quality','Operating cash-flow trend and conversion of profit into cash.')+
-    (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
+    (r.results?'<div class="row"><h3>'+(r.results.stale?'Last verified quarter':'Latest reported quarter')+'</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
     (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+

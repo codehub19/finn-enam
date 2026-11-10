@@ -267,44 +267,62 @@ function briefPage(id,view,raw){
   if(windowSelect)windowSelect.onchange=e=>{hours=Number(e.target.value);void load();};
   void load();
 }
+const portfolioStock=symbol=>state.catalog.find(stock=>stock.symbol===symbol);
+const holdingName=h=>h.name??portfolioStock(h.symbol)?.name??h.symbol;
 function portfolio(){
-  const stock=symbol=>state.catalog.find(s=>s.symbol===symbol);
-  const sectors=[...new Set(state.holdings.map(h=>stock(h.symbol)?.sector).filter(Boolean))];
-  const total=state.holdings.reduce((sum,h)=>sum+h.quantity*h.average,0);
-  const allocation=new Map();
+  const [,view]=routeParts();
+  if(view==='edit'){portfolioEdit();return;}
+  if(view==='allocation'){portfolioAllocation();return;}
+  main.innerHTML=hero('','Portfolio','Your current holdings.')+
+    '<div class="brief-toolbar"><a class="button primary" href="#portfolio/edit">'+icon('tune')+' Edit holdings</a><a class="button" href="#portfolio/allocation">'+icon('folio')+' Sector allocation</a></div>'+
+    panel('Holdings <small class="count-label">'+state.holdings.length+'</small>',state.holdings.length?'<div class="holdings-list">'+
+      '<div class="holding-row holding-head"><span>Company</span><span>Quantity</span><span>Average cost</span></div>'+
+      state.holdings.map(h=>'<div class="holding-row"><button type="button" class="ticker-button holding-company" data-research="'+escape(h.symbol)+'"><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></button><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
+      '<p class="muted">Your portfolio is empty.</p>');
+}
+function portfolioAllocation(){
+  const sectors=new Map();
+  let zeroCost=0;
   for(const h of state.holdings){
-    const sector=stock(h.symbol)?.sector??'Unclassified';
-    allocation.set(sector,(allocation.get(sector)??0)+h.quantity*h.average);
+    const cost=h.quantity*h.average;
+    if(!Number.isFinite(cost)||cost<=0){zeroCost++;continue;}
+    const sector=portfolioStock(h.symbol)?.sector??'Unclassified';
+    sectors.set(sector,(sectors.get(sector)??0)+cost);
   }
-  const allocationRows=[...allocation].filter(([,cost])=>cost>0).sort((a,b)=>b[1]-a[1]).map(([sector,cost])=>{
-    const share=100*cost/total;
-    return '<div class="allocation-row"><div class="row-head"><small>'+escape(sector)+'</small><strong>'+format(share,'%')+'</strong></div><meter min="0" max="100" value="'+share+'" aria-label="'+escape(sector)+' share of cost basis">'+format(share,'%')+'</meter></div>';
+  const entries=[...sectors].sort((a,b)=>b[1]-a[1]);
+  const total=entries.reduce((sum,[,cost])=>sum+cost,0);
+  const colors=['#5368db','#16857f','#d78035','#9859b5','#be526b','#4b8ec0','#718b35','#9e6c54','#6d7788','#bd934c'];
+  let angle=-Math.PI/2;
+  const point=a=>[100+88*Math.cos(a),100+88*Math.sin(a)].map(n=>n.toFixed(4)).join(' ');
+  const slices=entries.map(([,cost],i)=>{
+    const span=2*Math.PI*cost/total, start=point(angle);
+    angle+=span;
+    return entries.length===1?'<circle cx="100" cy="100" r="88" fill="'+colors[i]+'"/>':
+      '<path d="M 100 100 L '+start+' A 88 88 0 '+(span>Math.PI?1:0)+' 1 '+point(angle)+' Z" fill="'+colors[i%colors.length]+'"/>';
   }).join('');
-  main.innerHTML=hero('02 / Monitor','Your portfolio','Edit holdings, track exposure at cost, or import a new holdings list.')+
-    '<div class="metrics">'+metric('Holdings',state.holdings.length)+metric('Known sectors',sectors.length)+metric('Total cost basis',money.format(total))+'</div>'+
-    '<div class="grid">'+panel('Add or edit holding','<form id="holding">'+stockPicker('holding-search')+'<div class="fields"><label>Quantity<input name="quantity" type="number" min="0.000001" step="any" required></label><label>Average cost (₹)<input name="average" type="number" min="0" step="any" required></label><label>Purchase date<input name="purchaseDate" type="date" min="1900-01-01"></label></div><div class="actions"><button class="primary">'+icon('plus')+' Save holding</button>'+button('Remove selected','id="remove-holding" hidden')+'</div></form>')+
-    panel('Import holdings','<form id="import"><p class="muted">Replace your holdings with an NSE portfolio CSV. The purchase_date column is optional.</p><label>Holdings CSV<input type="file" accept=".csv,text/csv" required></label><div class="actions"><button class="primary">Replace holdings</button><a href="/sample-holdings.csv" download>Sample CSV</a></div></form>')+'</div>'+
-    panel('Allocation at cost','<div class="allocation">'+(allocationRows||'<p class="muted">Add holdings with a purchase cost to see sector allocation.</p>')+'</div>')+
-    panel('Holdings','<div class="table-wrap"><table><thead><tr><th>Company</th><th>Sector</th><th>Demo size band</th><th>Qty</th><th>Avg. cost</th><th>Purchased</th><th></th></tr></thead><tbody>'+state.holdings.map(h=>'<tr><td>'+button(escape(h.symbol),'data-research="'+escape(h.symbol)+'"')+'<small class="holding-name">'+escape(h.name??stock(h.symbol)?.name??'')+'</small></td><td>'+escape(stock(h.symbol)?.sector??'—')+'</td><td>'+escape(stock(h.symbol)?.cap??'—')+'</td><td>'+format(h.quantity)+'</td><td>'+money.format(h.average)+'</td><td>'+escape(h.purchaseDate??'—')+'</td><td>'+button('Edit','data-edit="'+escape(h.symbol)+'"')+'</td></tr>').join('')+'</tbody></table></div>');
-  const form=document.querySelector('#holding');
-  const remove=document.querySelector('#remove-holding');
+  const legend=entries.map(([sector,cost],i)=>'<li><svg class="swatch" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="'+colors[i%colors.length]+'"/></svg><span>'+escape(sector)+'</span><strong>'+format(100*cost/total,'%')+'</strong><small>'+money.format(cost)+'</small></li>').join('');
+  main.innerHTML=back('portfolio','Holdings')+hero('','Sector allocation','Each slice shows the sector’s share of your portfolio cost.')+
+    panel('Distribution by cost',total>0?'<div class="allocation-layout"><svg class="sector-pie" viewBox="0 0 200 200" role="img" aria-label="Pie chart of portfolio cost by sector. Exact percentages follow in the legend.">'+slices+'</svg><ul class="sector-legend">'+legend+'</ul></div><p class="muted">Total cost · '+money.format(total)+(zeroCost?' · '+zeroCost+' holdings without a positive cost are excluded.':'')+'</p>':'<p class="muted">Add a holding with a positive average cost to see sector allocation.</p>');
+}
+function portfolioEdit(){
+  main.innerHTML=back('portfolio','Holdings')+hero('','Edit holdings','Use your total quantity and average purchase cost across all purchases of the same stock.')+
+    '<div class="grid">'+panel('Add or update a stock','<form id="holding">'+stockPicker('holding-search')+'<div class="fields"><label>Total quantity<input name="quantity" type="number" min="0.000001" step="any" required></label><label>Average cost (₹)<input name="average" type="number" min="0" step="any" required></label></div><div class="actions"><button class="primary">Save holding</button>'+button('Remove holding','id="remove-holding" hidden')+'</div></form>')+
+    panel('Import holdings','<form id="import"><p class="muted">Importing a CSV replaces your existing holdings. Use symbol, quantity and average cost.</p><label>Holdings CSV<input type="file" accept=".csv,text/csv" required></label><div class="actions"><button class="primary">Replace holdings</button><a href="/sample-holdings.csv" download>Sample CSV</a></div></form>')+'</div>'+
+    panel('Manage existing holdings',state.holdings.map(h=>'<div class="row row-head"><span><strong>'+escape(h.symbol)+'</strong> <small>'+escape(holdingName(h))+'</small></span>'+button('Edit','data-edit="'+escape(h.symbol)+'" aria-label="Edit '+escape(h.symbol)+'"')+'</div>').join('')||'<p class="muted">No holdings to edit.</p>');
+  const form=document.querySelector('#holding'), remove=document.querySelector('#remove-holding');
   let selected;
-  form.elements.purchaseDate.max=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date());
   function selectHolding(company){
     selected=company;
-    const h=state.holdings.find(h=>h.symbol===company.symbol);
-    for(const key of ['quantity','average','purchaseDate'])form.elements[key].value=h?.[key]??'';
-    form.elements.purchaseDate.required=!h;
-    remove.hidden=!h;
+    const holding=state.holdings.find(h=>h.symbol===company.symbol);
+    for(const key of ['quantity','average'])form.elements[key].value=holding?.[key]??'';
+    remove.hidden=!holding;
     form.elements.quantity.focus();
   }
   const picker=bindPicker('holding-search',selectHolding,()=>{selected=null;remove.hidden=true;});
-  main.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{
-    const h=state.holdings.find(h=>h.symbol===b.dataset.edit);
-    picker.reset();
-    picker.input.value=h.symbol;
-    picker.status.textContent=(h.name??stock(h.symbol)?.name??h.symbol)+' · NSE';
-    selectHolding({symbol:h.symbol,name:h.name??stock(h.symbol)?.name});
+  main.querySelectorAll('[data-edit]').forEach(control=>control.onclick=()=>{
+    const h=state.holdings.find(item=>item.symbol===control.dataset.edit);
+    picker.reset();picker.input.value=h.symbol;picker.status.textContent=holdingName(h)+' · NSE';
+    selectHolding({symbol:h.symbol,name:holdingName(h)});
   });
   form.onsubmit=e=>{
     e.preventDefault();
@@ -312,9 +330,13 @@ function portfolio(){
     const payload={...Object.fromEntries(new FormData(form)),symbol:selected.symbol,name:selected.name};
     act(e.submitter,async()=>{Object.assign(state,await api('holding',payload));render();notify('Holding saved.');});
   };
-  remove.onclick=e=>act(e.target,async()=>{if(!selected)return;Object.assign(state,await api('holding',{symbol:selected.symbol,remove:true}));render();notify('Holding removed.');});
+  remove.onclick=()=>act(remove,async()=>{
+    if(!selected)return;
+    Object.assign(state,await api('holding',{symbol:selected.symbol,remove:true}));render();notify('Holding removed.');
+  });
   document.querySelector('#import').onsubmit=e=>{
-    e.preventDefault();const file=e.target.querySelector('input').files[0];
+    e.preventDefault();
+    const file=e.target.querySelector('input').files[0];
     if(!file||file.size>125000){notify('Choose a CSV smaller than 125 KB.');return;}
     if(!confirm('Replace all current holdings with this CSV?'))return;
     act(e.submitter,async()=>{Object.assign(state,await api('import',{csv:await file.text()}));render();notify('Portfolio imported.');});
@@ -341,37 +363,58 @@ function reportHTML(r,view='all'){
   const returns=r.price.returns;
   const inr=r.annual?.currency==='INR';
   const units=inr?'₹ crore':'USD million', divisor=inr?10000000:1000000;
-  const insights=(r.insights??[]).slice(0,view==='overview'?3:undefined).map(s=>'<article class="insight"><h3>'+escape(s.title)+'</h3>'+
-    (s.note?'<p>'+escape(s.note)+'</p>':'')+
-    (s.evidence?'<p class="muted evidence">“'+escape(s.evidence.text)+'” <a href="#source-'+escape(s.evidence.source)+'" data-source-index="'+escape(s.evidence.source)+'">['+escape(s.evidence.source)+']</a></p>':'')+
-    (!s.note&&!s.evidence?'<p class="muted">Evidence was unavailable.</p>':'')+'</article>').join('');
+  const oldTitles={'Trajectory':'Multi-year trajectory','Guidance':'Management outlook','Bull vs. bear':'Bull and bear evidence'};
+  const reference=n=>'<a href="#source-'+escape(n)+'" data-source-index="'+escape(n)+'">['+escape(n)+']</a>';
+  const excerpt=e=>e?'<p class="muted evidence">“'+escape(e.text)+'” '+reference(e.source)+'</p>':'';
+  function insight(title,scope,extra=''){
+    const s=(r.insights??[]).find(row=>row.title===title||row.title===oldTitles[title])??{};
+    const ai=r.aiSections?.find(row=>row.title===title);
+    const cases=title==='Bull vs. bear'?'<div class="case-grid"><p><strong>Bull</strong><br>'+escape(s.bull??'No verified supportive figure in this snapshot.')+'</p><p><strong>Bear</strong><br>'+escape(s.bear??(s.evidence?'See the cited risk disclosure below.':'No verified downside evidence in this snapshot.'))+'</p></div>':'';
+    const evidence=excerpt(s.evidence)+excerpt(s.additionalEvidence);
+    const analysis=ai?'<p class="section-analysis"><small>Gemini synthesis</small><br>'+escape(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
+    return '<article class="insight report-topic"><h3>'+title+'</h3><p class="muted topic-scope">'+scope+'</p>'+
+      (s.note&&!(title==='Financial snapshot'&&extra)?'<p>'+escape(s.note)+'</p>':'')+cases+analysis+evidence+extra+
+      (!s.note&&!evidence&&!ai&&!cases&&!extra?'<p class="muted">The available sources did not establish these details.</p>':'')+'</article>';
+  }
   const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  const latest=r.results?.periods?.[0];
+  const crore=value=>Number.isFinite(value)?format(value/10000000):'—';
+  const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+' · ₹ crore</p><div class="metrics">'+
+    metric('Revenue',crore(latest.revenue))+metric('Profit after tax',crore(latest.income))+
+    metric('PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
+    (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
   const overview=
     (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Gemini Flash'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
-    (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'<p class="muted">No research findings in this snapshot.</p>');
+    insight('Business snapshot','What it does, operating segments, and reported revenue mix.')+
+    insight('Financial snapshot','Revenue, margins, profit after tax, and key ratios.',snapshot)+
+    insight('Bull vs. bear','Evidence that supports or challenges the investment case.');
   const financials=
-    guidanceHTML(r.guidance)+
+    insight('Trajectory','Multi-year growth and margin expansion or compression.',trends)+
+    insight('Balance sheet','Debt, leverage, funding structure, and working-capital cycle.')+
+    insight('Cash quality','Operating cash-flow trend and conversion of profit into cash.')+
     (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
     (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+
     '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',format(r.price.fallback?r.price.tradedVolume:r.price.volume,r.price.fallback?'':'×'))+'</div>'+
     (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
-    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>'+
-    trends;
+    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>';
+  const outlook=insight('Narrative vs. numbers','Where management commentary agrees or diverges from comparable results.',guidanceHTML(r.guidance))+
+    insight('Guidance','Explicit growth, margin, and capex targets with the period they cover.');
   const sources='<div class="report-sources"><h3>Sources and coverage</h3><p class="muted">'+escape(r.aiStatus)+'</p>'+
     (r.sources.map((s,i)=>'<p data-report-source="'+(i+1)+'">['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</div>';
   if(view==='overview')return overview;
   if(view==='financials')return financials;
-  if(view==='sources')return sources+(insights?'<h3>Evidence and findings</h3><div class="insights">'+insights+'</div>':'');
-  return overview+financials+sources;
+  if(view==='outlook')return outlook;
+  if(view==='sources')return sources;
+  return overview+financials+outlook+sources;
 }
 function reportPage(r,base,view,snapshot=false){
   const parent=snapshot?'saved':'research';
-  const selected=['overview','financials','sources'].includes(view)?view:'overview';
+  const selected=['overview','financials','outlook','sources'].includes(view)?view:'overview';
   main.innerHTML=back(parent,snapshot?'Saved reports':'Research')+hero('',escape(r.symbol)+' research',snapshot?'Saved '+escape(when(r.createdAt)):'Company report')+
-    '<div class="report-tabs" aria-label="Report sections">'+[['overview','Overview'],['financials','Financials'],['sources','Sources']].map(([key,label])=>'<a href="#'+base+'/'+key+'" '+(selected===key?'aria-current="page"':'')+'>'+label+'</a>').join('')+'</div>'+
+    '<div class="report-tabs" aria-label="Report sections">'+[['overview','Overview'],['financials','Financials'],['outlook','Outlook'],['sources','Sources']].map(([key,label])=>'<a href="#'+base+'/'+key+'" '+(selected===key?'aria-current="page"':'')+'>'+label+'</a>').join('')+'</div>'+
     '<section class="panel report-view" data-report-base="'+base+'">'+reportHTML(r,selected)+'</section>'+
     '<div class="actions report-actions">'+(snapshot?button('Recheck sources','data-recheck="'+escape(r.id)+'"','primary')+button('Delete report','data-delete="'+escape(r.id)+'"'):
       button('Save report','id="save"','primary')+button(state.watch.includes(r.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(r.symbol)+'"'))+'</div>'+
@@ -393,7 +436,7 @@ function research(id){
   main.innerHTML=(sectorsPage?back('research','Research')+hero('','Sector leaders','Compare adjusted returns over the same trading window.'):
     hero('','Research','Find an NSE company and open a dedicated report.')+
     '<div id="research-progress" aria-live="polite">'+(researchPending?researchLoading(researchPending):'')+'</div>'+
-    panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
+    panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"','ticker-button')).join('')+'</div>')+
     '<div class="route-stack">'+(report?routeCard('research/report/overview','mark',escape(report.symbol)+' report','Return to your latest research'):'')+routeCard('research/sectors','pulse','Sector leaders','Compare tracked companies')+'</div>');
   if(!sectorsPage){
     bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
@@ -408,7 +451,7 @@ function research(id){
         const data=await api('sector?'+params);
         if(id!==generation)return;
         target.innerHTML='<p class="muted">'+data.rows.length+' of '+data.universe+' tracked stocks · '+data.days+'-session adjusted close return · '+escape(data.asOf||'no completed session')+'</p>'+
-          (data.rows.map((s,i)=>'<div class="row row-head"><span>'+(i+1)+'. '+button(s.symbol,'data-research="'+s.symbol+'"')+'</span><strong>'+format(s.performance,'%')+'</strong></div>').join('')||'<p class="muted">No comparable quotes returned.</p>');
+          (data.rows.map((s,i)=>'<div class="row row-head"><span>'+(i+1)+'. '+button(s.symbol,'data-research="'+s.symbol+'"','ticker-button')+'</span><strong>'+format(s.performance,'%')+'</strong></div>').join('')||'<p class="muted">No comparable quotes returned.</p>');
       }catch(error){target.textContent=error.message;}
     });
   };
@@ -446,7 +489,7 @@ function saved(){
   if(snapshot){reportPage(snapshot,'saved/report/'+snapshot.id,tab,true);return;}
   main.innerHTML=hero('04 / Recheck','Saved intelligence','Keep watch on companies and compare a fresh report against a saved snapshot.')+
     '<div class="grid">'+panel('Saved reports',state.saved.map(r=>'<a class="list-link" href="#saved/report/'+escape(r.id)+'/overview"><span><strong>'+escape(r.symbol)+'</strong><small>'+escape(when(r.createdAt))+'</small></span>'+icon('arrow')+'</a>').join('')||'<p class="muted">Run company research and save your first snapshot.</p>')+
-    panel('Watchlist',state.watch.map(s=>'<div class="row row-head">'+button(escape(s),'data-research="'+escape(s)+'"')+button('Remove','data-watch="'+escape(s)+'"')+'</div>').join('')||'<p class="muted">Add a company from its research view.</p>')+'</div>';
+    panel('Watchlist',state.watch.map(s=>'<div class="row row-head">'+button(escape(s),'data-research="'+escape(s)+'"','ticker-button')+button('Remove','data-watch="'+escape(s)+'"')+'</div>').join('')||'<p class="muted">Add a company from its research view.</p>')+'</div>';
 }
 function settings(){
   const s=state.settings;

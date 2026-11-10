@@ -176,3 +176,31 @@ button,.button,nav a{transition:background var(--motion-fast),border-color var(-
 .report-sources{margin-bottom:1rem}
 #filing-evidence:not(:empty){margin-top:1rem;border-top:1px solid var(--line);padding-top:.75rem}
 @media(prefers-reduced-motion:no-preference){main>.route-stack,main>.report-tabs{animation:appear var(--motion-enter) ease-out both}}
+/* Portfolio screens and compact company labels */
+.ticker-button{font-size:var(--type-label);font-weight:720;min-height:34px;padding:.25rem .52rem;border-radius:8px;letter-spacing:.01em}
+.tag,.exchange{font-size:.72rem;padding:.16rem .42rem;letter-spacing:.02em}
+.stock-badge{width:27px;height:27px;font-size:.66rem}
+.stock-copy strong,.stock-copy small{font-size:var(--type-label)}
+.holdings-list{display:grid;font-variant-numeric:tabular-nums}
+.holding-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(3.6rem,auto) minmax(5.85rem,auto);align-items:center;gap:.5rem;padding:.52rem .2rem;border-top:1px solid var(--line)}
+.holding-row>span{text-align:right;font-size:var(--type-small)}
+.holding-head{border-top:0;color:var(--sub);font-weight:680}
+.holding-head>span{font-size:.73rem}
+.holding-head>span:first-child{text-align:left}
+.holding-company{display:grid;justify-content:start;text-align:left;gap:.03rem;min-width:0;min-height:42px;background:transparent;border-color:transparent}
+.holding-company strong,.holding-company small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.holding-company small{font-size:.75rem;font-weight:500}
+.count-label{display:inline-block;color:var(--sub);font-weight:600}
+.allocation-layout{display:grid;gap:.9rem;align-items:center;margin-bottom:1rem}
+.sector-pie{width:min(100%,220px);margin:auto;display:block}
+.sector-pie path{stroke:var(--panel);stroke-width:1.4}
+.sector-legend{display:grid;gap:.4rem;padding:0;margin:0;list-style:none}
+.sector-legend li{display:grid;grid-template-columns:12px minmax(0,1fr) auto minmax(4.8rem,auto);align-items:center;gap:.5rem;font-variant-numeric:tabular-nums;font-size:var(--type-small)}
+.sector-legend li small{text-align:right}
+.swatch{width:12px;height:12px}
+.report-topic{margin:.55rem 0 .7rem}
+.topic-scope{font-size:var(--type-small)}
+.section-analysis small{font-weight:700;color:var(--accent)}
+.case-grid{display:grid;gap:.6rem;margin:.45rem 0}
+.case-grid p{padding:.62rem;border:1px solid var(--line);border-radius:8px;margin:0}
+@media(min-width:620px){.allocation-layout{grid-template-columns:minmax(9rem,15rem) minmax(0,1fr)}.case-grid{grid-template-columns:1fr 1fr}}

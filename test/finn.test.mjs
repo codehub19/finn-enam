@@ -8,9 +8,9 @@ import {join} from 'node:path';
 import {deflateRawSync} from 'node:zlib';
 import {metrics,briefingSlot,csvHoldings,classify,fundamentals} from '../data.mjs';
 import {reportDiff,parseEquityDirectory} from '../providers.mjs';
-import {parseNseQuarterly,quarterlyComparison,reportInsights} from '../insights.mjs';
+import {parseNseQuarterly,quarterlyComparison,reportInsights,RESEARCH_SECTIONS} from '../insights.mjs';
 import {guidanceScorecard} from '../guidance.mjs';
-import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief} from '../gemini.mjs';
+import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections} from '../gemini.mjs';
 import {parseAnnouncementRss,parseDailyReport} from '../exchange.mjs';
 import {parseWorldFeed,selectWorldNews} from '../news.mjs';
 test('global news only surfaces dated official links and labels a wider lookback',()=>{
@@ -36,6 +36,19 @@ test('Gemini uses the server-side header and returns only public answer text',as
  };
  assert.equal(await generateGeminiBrief({key:'fixture-key',payload,request}),'Company evidence [1].');
  await assert.rejects(generateGeminiBrief({key:'fixture-key',payload,request:async()=>new Response('',{status:429})}),/quota or rate limit/);
+});
+test('research preserves the requested sections and drops model text with unknown sources',()=>{
+ const topics=reportInsights([],null,{quarterly:null,periods:[]}).map(row=>row.title);
+ assert.deepEqual(topics,['Business snapshot','Financial snapshot','Trajectory','Balance sheet','Cash quality','Narrative vs. numbers','Guidance','Bull vs. bear']);
+ const output=[
+  {title:'Guidance',text:'Unverified guidance.',citations:[2]},
+  {title:'Cash quality',text:'Reported cash flow.',citations:[1,1]},
+  {title:'Business snapshot',text:'Reported business model.',citations:[1]}
+ ];
+ assert.deepEqual(parseGeminiSections(JSON.stringify(output),[{citation:1}]),[
+  output[2],{...output[1],citations:[1]}
+ ]);
+ assert.deepEqual(topics,RESEARCH_SECTIONS);
 });
 test('NSE fallback parses a reported close and matches RSS entries by company name',()=>{
  const data=deflateRawSync('TradDt,FinInstrmTp,TckrSymb,SctySrs,ClsPric,PrvsClsgPric,TtlTradgVol\n2026-11-09,STK,INFY,EQ,110,100,4500\n');

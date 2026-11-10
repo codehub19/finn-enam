@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {catalog,classify,dateIST,demoBars,metrics,fundamentals} from './data.mjs';
 import {extractEvidence,reportInsights,quarterlyComparison,parseNseQuarterly} from './insights.mjs';
 import {guidanceScorecard} from './guidance.mjs';
-import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief} from './gemini.mjs';
+import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections} from './gemini.mjs';
 import {parseDailyReport,parseAnnouncementRss} from './exchange.mjs';
 
 const nse='https://www.nseindia.com';
@@ -327,9 +327,11 @@ async function document(source,refresh){
 }
 function passages(text='',type){
   if(type==='Management') return text.slice(0,18000);
-  if(type==='Earnings call') return text.slice(0,19000);
-  const windows=[text.slice(0,3500)];
-  for(const pattern of [/management discussion/i,/business overview|business highlights/i,/consolidated statements of profit/i,/operating cash flow|cash flows/i,/borrowings|working capital/i,/risk management/i]){
+  const call=type==='Earnings call';
+  const windows=[text.slice(0,call?15000:3500)];
+  const topics=call?[/revenue growth guidance/i,/operating margin guidance/i,/capital expenditure|\bcapex\b/i,/cash conversion|free cash flow/i]:
+    [/management discussion/i,/business overview|business highlights/i,/segment revenue|revenue mix/i,/consolidated statements of profit/i,/operating cash flow|cash flows/i,/borrowings|working capital/i,/risk management/i];
+  for(const pattern of topics){
     const match=pattern.exec(text);
     if(match) windows.push(text.slice(match.index,match.index+3200));
   }
@@ -363,10 +365,11 @@ export async function research(symbol, mode, refresh=false) {
     const payload=geminiPayload(symbol,readable,model);
     try {
       const cacheKey='gemini:'+createHash('sha256').update(JSON.stringify({model,payload})).digest('hex');
-      out.narrative=await cached(cacheKey,86400000,async()=>{
+      out.aiSections=await cached(cacheKey,86400000,async()=>{
         const brief=await generateGeminiBrief({key,model,payload});
-        if(!brief)throw Error('No usable brief was returned.');
-        return brief;
+        const sections=brief?parseGeminiSections(brief,readable):[];
+        if(!sections.length)throw Error('No usable cited sections were returned.');
+        return sections;
       });
       out.aiModel=model;
       out.aiStatus='Gemini brief grounded in the primary-source excerpts.';

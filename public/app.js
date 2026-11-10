@@ -356,7 +356,7 @@ function stockPage(symbol,tab){
     const move=Number.isFinite(price.day)?'<span class="stock-move '+tone(price.day)+'">'+signed(price.day,'%')+'</span>':'';
     target.innerHTML='<section class="panel quote-card"><p class="eyebrow">Last traded session</p><div class="quote-line"><strong>'+cash(price.close)+'</strong>'+move+'</div>'+
       '<p class="muted">'+(pending?'Loading market data…':price.date?'Close · '+escape(price.date)+(price.stale?' · Last verified snapshot':''):'A completed-session price is unavailable.')+' '+link(price.source,'Price source ↗')+'</p>'+
-      priceChart(price.series)+'</section>'+
+      priceChart(price.series)+(price.historySource?'<p class="muted chart-source">'+link(price.historySource,'Historical chart source ↗')+'</p>':'')+'</section>'+
       panel('Your position','<div class="position-grid">'+metric('Quantity',format(holding.quantity))+metric('Average cost',cash(holding.average))+metric('Invested',cash(invested))+metric('Market value',cash(value))+metric('Unrealized P/L',gain===null?'—':(gain>0?'+':'')+cash(gain))+metric('Position return',signed(gain!==null&&invested>0?100*gain/invested:null,'%'))+'</div>')+
       (pending?'':panel('Company research',researchControls(created)));
     if(!pending)bindResearch(created);

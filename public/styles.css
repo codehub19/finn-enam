@@ -251,6 +251,7 @@ main :is(p,h1,h2,h3){overflow-wrap:anywhere}
 .stock-chart svg{display:block;width:100%;height:auto;max-height:13rem}
 .stock-chart polyline{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .chart-grid{fill:none;stroke:var(--line);stroke-dasharray:3 5}
+.chart-source{margin:.5rem 0 0;font-size:var(--type-small)}
 .stock-chart figcaption{display:flex;justify-content:space-between;gap:.5rem;font-size:var(--type-small);color:var(--sub)}
 .position-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,8rem),1fr));gap:.52rem}
 .position-grid .metric{padding:.62rem .7rem;min-width:0}

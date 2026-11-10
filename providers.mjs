@@ -140,13 +140,19 @@ export async function quote(symbol, mode, refresh=false) {
     },refresh);
   } catch(error) {
     if(/HTTP (429|403)$/.test(error.message))yahooRetryAt=Date.now()+120000;
+    const saved=verified.quotes[symbol];
+    const recent=saved&&Date.now()-Date.parse(saved.date)<8*86400000;
     try{
       const {quotes,file}=await exchangeClose(today,afterClose);
       const row=quotes.get(symbol);
-      if(row)return {mode,source:reportsPage,archive:file,fallback:true,...row,volume:null,coverageNote:'NSE reported close and prior close. Adjusted return history and the 20-session volume baseline are unavailable.'};
+      if(row){
+        const series=recent?saved.series?.filter(point=>point.date<=row.date):null;
+        return {mode,source:reportsPage,archive:file,fallback:true,...row,volume:null,
+          ...(series?.length>1?{series,historySource:saved.source}:{}),
+          coverageNote:'NSE reported close and prior close. Adjusted returns and the 20-session volume baseline are unavailable.'};
+      }
     }catch{}
-    const saved=verified.quotes[symbol];
-    if(saved&&Date.now()-Date.parse(saved.date)<8*86400000)return {...saved,stale:true,
+    if(recent)return {...saved,stale:true,
       coverageNote:'Last verified completed session from the '+verified.checkedAt.slice(0,10)+' fallback snapshot.'};
     return {mode,source,error:error.message};
   }

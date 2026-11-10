@@ -27,11 +27,11 @@ const format=(n,suffix='')=>Number.isFinite(n)?n.toLocaleString('en-IN',{maximum
 const when=value=>new Date(value).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
 const link=(url,label)=>/^https:\/\//.test(url??'')?'<a href="'+escape(url)+'" target="_blank" rel="noopener noreferrer">'+escape(label)+'</a>':'';
 const button=(label,attrs='',style='')=>'<button type="button" class="'+style+'" '+attrs+'>'+label+'</button>';
-const companyLogo=symbol=>{
-  const src=symbol==='TCS'?'/logo-tcs.png':null;
-  return src?'<span class="company-logo"><img src="'+src+'" alt="" decoding="async"></span>':
-    '<span class="company-logo company-monogram" aria-hidden="true">'+escape(symbol.slice(0,2))+'</span>';
-};
+const companyLogo=symbol=>'<span class="company-logo" aria-hidden="true"><span class="logo-fallback">'+escape(symbol.slice(0,2))+'</span><img src="/logos/'+encodeURIComponent(symbol)+'" alt="" loading="lazy" decoding="async"></span>';
+document.addEventListener('load',event=>{
+  const image=event.target;
+  if(image instanceof HTMLImageElement&&image.parentElement?.classList.contains('company-logo'))image.parentElement.classList.add('has-logo');
+},true);
 const topicIcon=topic=>'<span class="route-icon news-art">'+icon(topic==='Energy'||topic==='Inflation'?'pulse':topic==='India policy'?'folio':'globe')+'</span>';
 const tag=value=>'<span class="tag">'+escape(value)+'</span>';
 const metric=(label,value)=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(value)+'</strong></div>';
@@ -91,7 +91,7 @@ function bindPicker(id,onSelect,onClear=()=>{}){
           const control=document.createElement('button');
           control.type='button';
           control.className='stock-option';
-          control.innerHTML='<span class="stock-badge">'+escape(stock.symbol.slice(0,2))+'</span><span class="stock-copy"><strong>'+escape(stock.symbol)+'</strong><small>'+escape(stock.name)+'</small></span><span class="exchange">'+escape(stock.exchange)+'</span>'+icon('arrow');
+          control.innerHTML=companyLogo(stock.symbol)+'<span class="stock-copy"><strong>'+escape(stock.symbol)+'</strong><small>'+escape(stock.name)+'</small></span><span class="exchange">'+escape(stock.exchange)+'</span>'+icon('arrow');
           control.onclick=()=>{
             input.value=stock.symbol;
             status.textContent=stock.name+' · '+stock.exchange;
@@ -283,15 +283,98 @@ function briefPage(id,view,raw){
 }
 const portfolioStock=symbol=>state.catalog.find(stock=>stock.symbol===symbol);
 const holdingName=h=>h.name??portfolioStock(h.symbol)?.name??h.symbol;
+const stockPath=symbol=>'portfolio/stock/'+encodeURIComponent(symbol);
+const cash=value=>Number.isFinite(value)?money.format(value):'—';
+const signed=(value,unit='')=>Number.isFinite(value)?(value>0?'+':'')+format(value,unit):'—';
+const tone=value=>value>0?'gain':value<0?'loss':'';
+function priceChart(series=[]){
+  const closes=series.filter(row=>Number.isFinite(row.close));
+  if(closes.length<2)return '';
+  const values=closes.map(row=>row.close), min=Math.min(...values), max=Math.max(...values);
+  const points=values.map((value,i)=>(6+348*i/(values.length-1)).toFixed(1)+','+(112-100*(value-min)/(max-min||1)).toFixed(1)).join(' ');
+  return '<figure class="stock-chart"><svg viewBox="0 0 360 120" role="img" aria-label="Completed session closing prices"><path class="chart-grid" d="M6 18h348M6 64h348M6 112h348"/><polyline points="'+points+'"/></svg><figcaption><span>'+escape(closes[0].date)+'</span><span>'+escape(closes.at(-1).date)+'</span></figcaption></figure>';
+}
+function stockPage(symbol,tab){
+  const holding=state.holdings.find(row=>row.symbol===symbol);
+  if(!holding){main.innerHTML=back('portfolio','Portfolio')+panel('Holding unavailable','<p>This company is no longer in your portfolio.</p>');return;}
+  const base=stockPath(symbol), researchView=['overview','financials','outlook','sources'].includes(tab);
+  const info=portfolioStock(symbol);
+  const current=state, revision=generation;
+  const live=()=>state===current&&generation===revision;
+  const header='<div class="stock-title">'+companyLogo(symbol)+'<div><p class="eyebrow">NSE · '+escape(symbol)+'</p><h1>'+escape(holdingName(holding))+'</h1>'+
+    (info?'<p class="muted">'+escape(info.sector)+'</p>':'')+'</div></div>';
+  main.innerHTML=back('portfolio','Portfolio')+header+
+    '<div class="stock-segments" aria-label="Stock screens"><a href="#'+base+'" '+(!researchView?'aria-current="page"':'')+'>Overview</a><a href="#'+base+'/overview" '+(researchView?'aria-current="page"':'')+'>Research</a></div>'+
+    '<div id="stock-progress" aria-live="polite"></div><div id="stock-content"></div>';
+  const target=document.querySelector('#stock-content'), progress=document.querySelector('#stock-progress');
+  const requestResearch=(control,refresh)=>act(control,async()=>{
+    progress.innerHTML=researchLoading(symbol);
+    try{
+      const result=await api('research',{symbol,live:true,reuse:!refresh,refresh});
+      if(!live())return;
+      if(!result.coverage?.financials&&!result.coverage?.documents){
+        progress.innerHTML='<p class="error">Company filings are temporarily unavailable. Try again later.</p>';return;
+      }
+      if(researchView){progress.replaceChildren();renderStockReport(result);}
+      else location.hash=base+'/overview';
+    }catch(error){if(live())progress.innerHTML='<p class="error">'+escape(error.message)+'</p>';}
+  });
+  function researchControls(created){
+    return '<p class="muted research-stamp">'+(created?'Last researched '+escape(when(created))+' IST':'No research run yet')+'</p>'+
+      '<div class="actions">'+(created&&!researchView?'<a class="button primary" href="#'+base+'/overview">View research</a>':'')+
+      button(created?'Refresh research':'Run research','id="run-stock-research"',created&&!researchView?'':'primary')+'</div>';
+  }
+  function bindResearch(created){
+    const control=target.querySelector('#run-stock-research');
+    if(control)control.onclick=()=>void requestResearch(control,Boolean(created));
+  }
+  function renderStockReport(result){
+    target.innerHTML=panel('Company research',researchControls(result?.createdAt))+
+      (result?'<div class="report-tabs" aria-label="Research sections">'+[['overview','Summary'],['financials','Financials'],['outlook','Outlook'],['sources','Sources']].map(([key,label])=>
+        '<a href="#'+base+'/'+key+'" '+(tab===key?'aria-current="page"':'')+'>'+label+'</a>').join('')+'</div>'+
+        '<section class="panel report-view" data-report-base="'+base+'">'+reportHTML(result,tab)+'</section>'+
+        '<div class="actions">'+button('Save report','id="save-stock-report"')+'</div>':'');
+    bindResearch(result?.createdAt);
+    const save=target.querySelector('#save-stock-report');
+    if(save)save.onclick=()=>act(save,async()=>{
+      const saved=await api('save-report',{id:result.draftId});
+      if(!live())return;
+      if(!state.saved.some(row=>row.id===saved.id))state.saved.unshift(saved);
+      notify('Report saved.');
+    });
+  }
+  if(researchView){
+    target.innerHTML=loading('Opening saved research…');
+    void api('stock-research?symbol='+encodeURIComponent(symbol)).then(result=>{if(live())renderStockReport(result.report);})
+      .catch(error=>{if(live())target.innerHTML='<p class="error">'+escape(error.message)+'</p>';});
+    return;
+  }
+  function renderQuote(price={},created,pending=false){
+    const value=Number.isFinite(price.close)?price.close*holding.quantity:null;
+    const invested=holding.average*holding.quantity;
+    const gain=value===null?null:value-invested;
+    const move=Number.isFinite(price.day)?'<span class="stock-move '+tone(price.day)+'">'+signed(price.day,'%')+'</span>':'';
+    target.innerHTML='<section class="panel quote-card"><p class="eyebrow">Last traded session</p><div class="quote-line"><strong>'+cash(price.close)+'</strong>'+move+'</div>'+
+      '<p class="muted">'+(pending?'Loading market data…':price.date?'Close · '+escape(price.date)+(price.stale?' · Last verified snapshot':''):'A completed-session price is unavailable.')+' '+link(price.source,'Price source ↗')+'</p>'+
+      priceChart(price.series)+'</section>'+
+      panel('Your position','<div class="position-grid">'+metric('Quantity',format(holding.quantity))+metric('Average cost',cash(holding.average))+metric('Invested',cash(invested))+metric('Market value',cash(value))+metric('Unrealized P/L',gain===null?'—':(gain>0?'+':'')+cash(gain))+metric('Position return',signed(gain!==null&&invested>0?100*gain/invested:null,'%'))+'</div>')+
+      (pending?'':panel('Company research',researchControls(created)));
+    if(!pending)bindResearch(created);
+  }
+  renderQuote({},null,true);
+  void api('stock?symbol='+encodeURIComponent(symbol)).then(result=>{if(live())renderQuote(result.price,result.lastResearchedAt);})
+    .catch(error=>{if(live()){renderQuote();progress.innerHTML='<p class="error">'+escape(error.message)+'</p>';}});
+}
 function portfolio(){
-  const [,view]=routeParts();
+  const [,view,raw,tab]=routeParts();
+  if(view==='stock'){let symbol='';try{symbol=decodeURIComponent(raw??'');}catch{}stockPage(symbol,tab);return;}
   if(view==='edit'){portfolioEdit();return;}
   if(view==='allocation'){portfolioAllocation();return;}
   main.innerHTML=hero('','Portfolio','Your current holdings.')+
     '<div class="brief-toolbar"><a class="button primary" href="#portfolio/edit">'+icon('tune')+' Edit holdings</a><a class="button" href="#portfolio/allocation">'+icon('folio')+' Sector allocation</a></div>'+
     panel('Holdings <small class="count-label">'+state.holdings.length+'</small>',state.holdings.length?'<div class="holdings-list">'+
       '<div class="holding-row holding-head"><span>Company</span><span>Quantity</span><span>Average cost</span></div>'+
-      state.holdings.map(h=>'<div class="holding-row"><button type="button" class="ticker-button holding-company" data-research="'+escape(h.symbol)+'">'+companyLogo(h.symbol)+'<span><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></span></button><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
+      state.holdings.map(h=>'<div class="holding-row"><a class="holding-company" href="#'+stockPath(h.symbol)+'">'+companyLogo(h.symbol)+'<span class="holding-copy"><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></span></a><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
       '<p class="muted">Your portfolio is empty.</p>');
 }
 function portfolioAllocation(){
@@ -466,7 +549,7 @@ function research(id){
         const data=await api('sector?'+params);
         if(id!==generation)return;
         target.innerHTML='<p class="muted">'+data.rows.length+' of '+data.universe+' tracked stocks · '+data.days+'-session adjusted close return · '+escape(data.asOf||'no completed session')+'</p>'+
-          (data.rows.map((s,i)=>'<div class="row row-head"><span>'+(i+1)+'. '+button(s.symbol,'data-research="'+s.symbol+'"','ticker-button')+'</span><strong>'+format(s.performance,'%')+'</strong></div>').join('')||'<p class="muted">No comparable quotes returned.</p>');
+          (data.rows.map((s,i)=>'<div class="row row-head"><span>'+(i+1)+'. '+button(companyLogo(s.symbol)+escape(s.symbol),'data-research="'+escape(s.symbol)+'"','ticker-button')+'</span><strong>'+format(s.performance,'%')+'</strong></div>').join('')||'<p class="muted">No comparable quotes returned.</p>');
       }catch(error){target.textContent=error.message;}
     });
   };
@@ -483,7 +566,7 @@ async function runResearch(symbol,control,live=false){
   if(pickerStatus)pickerStatus.textContent='Fetching live research for '+symbol+'…';
   await act(control,async()=>{
     try{
-      const result=await api('research',{symbol,...(live?{live:true}:{})});
+      const result=await api('research',{symbol,...(live?{live:true,reuse:true}:{})});
       if(request!==researchSequence||state!==current)return;
       researchPending=null;
       report=result;
@@ -504,7 +587,7 @@ function saved(){
   if(snapshot){reportPage(snapshot,'saved/report/'+snapshot.id,tab,true);return;}
   main.innerHTML=hero('04 / Recheck','Saved intelligence','Keep watch on companies and compare a fresh report against a saved snapshot.')+
     '<div class="grid">'+panel('Saved reports',state.saved.map(r=>'<a class="list-link" href="#saved/report/'+escape(r.id)+'/overview"><span><strong>'+escape(r.symbol)+'</strong><small>'+escape(when(r.createdAt))+'</small></span>'+icon('arrow')+'</a>').join('')||'<p class="muted">Run company research and save your first snapshot.</p>')+
-    panel('Watchlist',state.watch.map(s=>'<div class="row row-head">'+button(escape(s),'data-research="'+escape(s)+'"','ticker-button')+button('Remove','data-watch="'+escape(s)+'"')+'</div>').join('')||'<p class="muted">Add a company from its research view.</p>')+'</div>';
+    panel('Watchlist',state.watch.map(s=>'<div class="row row-head">'+button(companyLogo(s)+escape(s),'data-research="'+escape(s)+'"','ticker-button')+button('Remove','data-watch="'+escape(s)+'"')+'</div>').join('')||'<p class="muted">Add a company from its research view.</p>')+'</div>';
 }
 function settings(){
   const s=state.settings;

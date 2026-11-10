@@ -137,7 +137,8 @@ test('report diff reports changed documents without treating failed downloads as
 let server,url,dir;
 before(async()=>{
  dir=await mkdtemp(join(tmpdir(),'finn-test-'));
- server=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',HOST:'127.0.0.1',FINN_DB:join(dir,'test.sqlite'),PUBLIC_ORIGIN:'',VAPID_PUBLIC_KEY:''}});
+ const offline='data:text/javascript,'+encodeURIComponent("globalThis.fetch=async()=>new Response('',{status:403});");
+ server=spawn(process.execPath,['--import',offline,'server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',HOST:'127.0.0.1',FINN_DB:join(dir,'test.sqlite'),PUBLIC_ORIGIN:'',VAPID_PUBLIC_KEY:'',GEMINI_API_KEY:''}});
  server.stderr.on('data',chunk=>process.stderr.write(chunk));
  url=await new Promise((resolve,reject)=>{
    server.once('exit',code=>reject(Error('Test server exited '+code)));
@@ -205,4 +206,31 @@ test('guest sessions are private and can be signed out',async()=>{
  assert.deepEqual((await api('state',null,other.cookie)).data.watch,[]);
  assert.equal((await api('logout',{},guest.cookie)).status,200);
  assert.equal((await api('state',null,guest.cookie)).status,401);
+});
+
+test('opening a holding never starts research and its latest report is private and reusable',async()=>{
+ const one=await api('guest',{}), two=await api('guest',{});
+ assert.equal((await api('stock?symbol=TCS',null,one.cookie)).data.lastResearchedAt,null);
+ assert.equal((await api('stock-research?symbol=TCS',null,one.cookie)).data.report,null);
+ const first=await api('research',{symbol:'TCS',live:true,reuse:true},one.cookie);
+ assert.equal(first.status,200);
+ assert.equal(first.data.coverage.financials,true);
+ const loaded=(await api('stock-research?symbol=TCS',null,one.cookie)).data.report;
+ assert.equal(loaded.draftId,first.data.draftId);
+ assert.equal((await api('stock?symbol=TCS',null,one.cookie)).data.lastResearchedAt,first.data.createdAt);
+ assert.equal((await api('stock-research?symbol=TCS',null,two.cookie)).data.report,null);
+ assert.equal((await api('research',{symbol:'TCS',live:true,reuse:true},one.cookie)).data.draftId,first.data.draftId);
+ const refreshed=await api('research',{symbol:'TCS',live:true,refresh:true},one.cookie);
+ assert.notEqual(refreshed.data.draftId,first.data.draftId);
+ assert.equal((await api('stock-research?symbol=TCS',null,one.cookie)).data.report.draftId,refreshed.data.draftId);
+});
+
+test('every built-in company has a locally served logo',async()=>{
+ const user=await api('guest',{});
+ const {catalog}= (await api('state',null,user.cookie)).data;
+ for(const {symbol} of catalog){
+   const response=await fetch(url+'/logos/'+encodeURIComponent(symbol));
+   assert.equal(response.status,200,symbol);
+   assert.match(response.headers.get('content-type'),/^image[/]/);
+ }
 });

@@ -1,0 +1,98 @@
+{
+  "RELIANCE": {
+    "file": "RELIANCE.png",
+    "source": "https://rilstaticasset.akamaized.net/sites/default/files/2022-11/reliance-industries_logo1.png"
+  },
+  "HDFCBANK": {
+    "file": "HDFCBANK.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/hdfc-bank--big.svg"
+  },
+  "ICICIBANK": {
+    "file": "ICICIBANK.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/icici-bank--big.svg"
+  },
+  "TCS": {
+    "file": "TCS.png",
+    "source": "https://www.tcs.com/who-we-are/tcs-brand/tcs-logo"
+  },
+  "LT": {
+    "file": "LT.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/larsen-and-toubro--big.svg"
+  },
+  "SUNPHARMA": {
+    "file": "SUNPHARMA.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/sun-pharmaceutical--big.svg"
+  },
+  "MARUTI": {
+    "file": "MARUTI.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/maruti-suzuki-india--big.svg"
+  },
+  "HINDUNILVR": {
+    "file": "HINDUNILVR.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/unilever--big.svg"
+  },
+  "TATAPOWER": {
+    "file": "TATAPOWER.svg",
+    "source": "https://www.tatapower.com/content/dam/tatapoweraemsitesprogram/tatapower/logos/TP%20Logo.svg"
+  },
+  "CUMMINSIND": {
+    "file": "CUMMINSIND.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/cummins--big.svg"
+  },
+  "PERSISTENT": {
+    "file": "PERSISTENT.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/persistent-systems-ltd--big.svg"
+  },
+  "FEDERALBNK": {
+    "file": "FEDERALBNK.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/fed-bank--big.svg"
+  },
+  "APOLLOTYRE": {
+    "file": "APOLLOTYRE.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/apollo-tyres--big.svg"
+  },
+  "GODREJAGRO": {
+    "file": "GODREJAGRO.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/godrej-agrovet--big.svg"
+  },
+  "SOUTHBANK": {
+    "file": "SOUTHBANK.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/south-indian-bank--big.svg"
+  },
+  "KIRLOSBROS": {
+    "file": "KIRLOSBROS.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/kirloskar-brothers--big.svg"
+  },
+  "SANDHAR": {
+    "file": "SANDHAR.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/sandhar-technologi--big.svg"
+  },
+  "MOREPENLAB": {
+    "file": "MOREPENLAB.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/morepen-laboratories--big.svg"
+  },
+  "INFY": {
+    "file": "INFY.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/infosys--big.svg"
+  },
+  "WIPRO": {
+    "file": "WIPRO.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/wipro--big.svg"
+  },
+  "DRREDDY": {
+    "file": "DRREDDY.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/dr-reddys--big.svg"
+  },
+  "HINDALCO": {
+    "file": "HINDALCO.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/hindalco--big.svg"
+  },
+  "TATASTEEL": {
+    "file": "TATASTEEL.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/tata--big.svg"
+  },
+  "AXISBANK": {
+    "file": "AXISBANK.svg",
+    "source": "https://s3-symbol-logo.tradingview.com/axis-bank--big.svg"
+  }
+}

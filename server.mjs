@@ -6,10 +6,11 @@ import {randomBytes,randomUUID,scrypt,timingSafeEqual,createHash} from 'node:cry
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
-import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight} from './providers.mjs';
+import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight,companyLogo} from './providers.mjs';
 import {worldNews} from './news.mjs';
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
+const logoAssets=JSON.parse(await readFile(resolve(root,'config/company-logos.json'),'utf8'));
 const path=resolve(process.env.FINN_DB||resolve(root,'finn.sqlite'));
 await mkdir(resolve(path,'..'),{recursive:true});
 const db=new DatabaseSync(path);
@@ -21,6 +22,10 @@ db.exec(`
  CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS drafts (id TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL, data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS subscriptions (endpoint TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES users(id), data TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS latest_research (
+   owner TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, symbol TEXT NOT NULL, id TEXT NOT NULL, created TEXT NOT NULL,
+   data TEXT NOT NULL, PRIMARY KEY(owner,symbol), UNIQUE(owner,id)
+ );
  CREATE TABLE IF NOT EXISTS briefing_cache (key TEXT PRIMARY KEY, slot TEXT NOT NULL, value TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS deliveries (endpoint TEXT NOT NULL, event TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(endpoint,event));
 `);
@@ -144,7 +149,7 @@ async function scan(data,todayOnly=false,refresh=false){
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',
-  '/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/logo-tcs.png':'logo-tcs.png','/sample-holdings.csv':'sample-holdings.csv'
+  '/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/logo-tcs.png':'logos/TCS.png','/sample-holdings.csv':'sample-holdings.csv'
 };
 const mime={html:'text/html',js:'text/javascript',css:'text/css',webmanifest:'application/manifest+json',svg:'image/svg+xml',png:'image/png',csv:'text/csv'};
 let push,calendar;
@@ -175,6 +180,23 @@ async function route(req,res){
   if(method==='GET'&&p==='/healthz'){
     db.prepare('SELECT 1').get();
     return json(res,200,{status:'ok'});
+  }
+  if(method==='GET'&&p.startsWith('/logos/')){
+    const match=/^\/logos\/([A-Z0-9&-]{1,24})$/.exec(p.replace(/%26/ig,'&'));
+    if(!match)throw fail(404,'Logo unavailable.');
+    const symbol=match[1], local=logoAssets[symbol];
+    let content;
+    if(local)content=await readFile(resolve(root,'public/logos',local.file));
+    else{
+      limit('logo:'+req.socket.remoteAddress,120,60000);
+      content=await companyLogo(symbol);
+    }
+    res.writeHead(content?200:404,{
+      'Content-Type':local?.file.endsWith('.png')?'image/png':'image/svg+xml',
+      'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      'Cache-Control':content?'public, max-age=86400':'public, max-age=600'
+    });
+    return res.end(content??'');
   }
   if(publicFiles[p]&&method==='GET'){
     const name=publicFiles[p], content=await readFile(resolve(root,'public',name));
@@ -239,6 +261,19 @@ async function route(req,res){
       const query=(url.searchParams.get('q')??'').trim();
       if(!query||query.length>100) throw fail(400,'Enter a company name, NSE ticker, or ISIN.');
       return json(res,200,await searchEquities(query));
+    }
+    if(p==='/api/stock'||p==='/api/stock-research'){
+      limit('stock-view:'+user.id,60,60000);
+      const symbol=symbolOf(url.searchParams.get('symbol'));
+      const holding=data.holdings.find(row=>row.symbol===symbol);
+      if(!holding)throw fail(404,'This company is no longer in your portfolio.');
+      const latest=db.prepare('SELECT id,created FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
+      if(p==='/api/stock-research'){
+        const record=latest&&db.prepare('SELECT data FROM latest_research WHERE owner=? AND id=?').get(user.id,latest.id);
+        return json(res,200,{report:record?{...JSON.parse(record.data),draftId:latest.id}:null});
+      }
+      const price=await briefingQuote(symbol,false);
+      return json(res,200,{price,lastResearchedAt:latest?.created??null});
     }
     if(p==='/api/state') return json(res,200,{email:user.email,...data,catalog,categories,push:{enabled:pushReady(),publicKey:pushReady()?process.env.VAPID_PUBLIC_KEY:null,reason:!push?'HTTPS and VAPID setup required.':!calendarCurrent()?'A verified calendar for the current NSE trading year is required.':null}});
     if(p==='/api/digest'){
@@ -308,16 +343,27 @@ async function route(req,res){
     }
     if(p==='/api/research'){
       limit('research:'+user.id,16,600000);
-      const symbol=symbolOf(input.symbol), report=await research(symbol,input.live===true?'live':data.mode);
-      const draftId=randomUUID();
+      const symbol=symbolOf(input.symbol);
+      const mode=input.live===true?'live':data.mode;
+      const prior=mode==='live'&&db.prepare('SELECT id,data FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
+      if(input.reuse===true&&prior)return json(res,200,{...JSON.parse(prior.data),draftId:prior.id});
+      const report=await research(symbol,mode,input.refresh===true);
+      const verified=report.coverage?.financials||report.coverage?.documents;
+      if(mode==='live'&&!verified&&prior)throw fail(503,'Fresh company filings were unavailable. Your previous research is still available.');
+      const draftId=randomUUID(), serialized=JSON.stringify(report);
       db.prepare('DELETE FROM drafts WHERE expires<=?').run(Date.now());
-      db.prepare('INSERT INTO drafts VALUES(?,?,?,?)').run(draftId,user.id,Date.now()+3600000,JSON.stringify(report));
+      db.prepare('INSERT INTO drafts VALUES(?,?,?,?)').run(draftId,user.id,Date.now()+3600000,serialized);
+      if(mode==='live'&&verified){
+        db.prepare('INSERT INTO latest_research VALUES(?,?,?,?,?) ON CONFLICT(owner,symbol) DO UPDATE SET id=excluded.id,created=excluded.created,data=excluded.data WHERE excluded.created >= latest_research.created')
+          .run(user.id,symbol,draftId,report.createdAt,serialized);
+      }
       return json(res,200,{...report,draftId});
     }
     if(p==='/api/save-report'){
       const draft=db.prepare('SELECT data FROM drafts WHERE id=? AND owner=? AND expires>?').get(String(input.id??''),user.id,Date.now());
-      if(!draft) throw fail(404,'Research snapshot expired. Run research again.');
-      const snapshot={id:String(input.id),...JSON.parse(draft.data)};
+      const stored=draft??db.prepare('SELECT data FROM latest_research WHERE id=? AND owner=?').get(String(input.id??''),user.id);
+      if(!stored) throw fail(404,'Research snapshot expired. Run research again.');
+      const snapshot={id:String(input.id),...JSON.parse(stored.data)};
       mutate(d=>{
         if(d.saved.some(r=>r.id===snapshot.id)) return;
         if(d.saved.length>=30) throw fail(409,'Remove a saved report first (limit 30).');

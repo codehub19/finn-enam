@@ -29,6 +29,25 @@ async function get(url, headers={}, options={}) {
   if(!res.ok) throw Error('Provider returned HTTP '+res.status);
   return res;
 }
+export function companyLogo(symbol){
+  return cached('logo:'+symbol,86400000,async()=>{
+    try{
+      const id='NSE:'+symbol;
+      const response=await get('https://scanner.tradingview.com/india/scan',{'Content-Type':'application/json'},{
+        method:'POST',body:JSON.stringify({symbols:{tickers:[id],query:{types:[]}},columns:['logoid']}),
+        signal:AbortSignal.timeout(3500)
+      });
+      const logo=(await response.json()).data?.find(row=>row.s===id)?.d?.[0];
+      if(!/^[a-z0-9][a-z0-9/-]{0,79}$/.test(logo??'')||logo.includes('//'))return null;
+      const image=await get('https://s3-symbol-logo.tradingview.com/'+logo+'--big.svg',{},{
+        redirect:'error',signal:AbortSignal.timeout(3500)
+      });
+      if(!image.headers.get('content-type')?.startsWith('image/svg+xml'))return null;
+      const svg=await image.text();
+      return svg.length<=100000&&/<svg\b/i.test(svg)&&!/<script\b|<foreignObject\b/i.test(svg)?svg:null;
+    }catch{return null;}
+  });
+}
 const equityDirectory='https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv';
 let lastDirectory, directoryRetryAt=0;
 export function parseEquityDirectory(csv) {
@@ -117,7 +136,7 @@ export async function quote(symbol, mode, refresh=false) {
       const bars=entry.timestamp.map((t,i)=>({date:dateIST(new Date(t*1000)),close:q.close[i],volume:q.volume[i],adjusted:adj?.[i]}))
         .filter(b=>b.close>0&&b.adjusted>0&&Number.isFinite(b.volume)&&(b.date<today||(b.date===today&&afterClose)));
       if(!bars.length) throw Error('No completed session');
-      return {mode,source,...metrics(bars)};
+      return {mode,source,...metrics(bars),series:bars.slice(-30).map(({date,close})=>({date,close}))};
     },refresh);
   } catch(error) {
     if(/HTTP (429|403)$/.test(error.message))yahooRetryAt=Date.now()+120000;

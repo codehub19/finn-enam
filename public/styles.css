@@ -280,3 +280,30 @@ main :is(p,h1,h2,h3){overflow-wrap:anywhere}
   .list-link{gap:.43rem}
   .stock-chart figcaption{font-size:.73rem}
 }
+
+/* Sign-in and account creation */
+.auth-layout{display:grid;gap:1.3rem;width:min(100%,58rem);max-width:none;margin:clamp(.6rem,5vw,4rem) auto 0}
+.auth-intro{padding:clamp(.2rem,3vw,1.4rem)}
+.auth-intro h1{font-size:clamp(1.85rem,4.6vw,3.55rem);line-height:1.08;letter-spacing:-.055em;margin:.5rem 0 .7rem}
+.auth-intro>p.muted{max-width:32ch;margin-bottom:0}
+.auth-features{display:none;flex-wrap:wrap;gap:.6rem;margin-top:1.6rem}
+.auth-features span{display:inline-flex;align-items:center;gap:.4rem;color:var(--sub);font-size:var(--type-small)}
+.auth-features svg{color:var(--accent);width:17px}
+.auth-card{min-width:0;padding:clamp(1rem,3.5vw,2rem);border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:var(--shadow)}
+.auth-card h2{font-size:1.4rem;margin:1rem 0 .3rem}
+.auth-description,.auth-guest-note{font-size:var(--type-small)}
+.auth-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.22rem;padding:.2rem;background:var(--inset);border:1px solid var(--line);border-radius:12px}
+.auth-switch button{border-color:transparent;background:transparent;color:var(--sub);min-width:0;padding:.35rem;font-size:var(--type-small);font-weight:680}
+.auth-switch button[aria-pressed=true]{background:var(--lift);color:var(--text)}
+.auth-card .fields{gap:.65rem;margin:1rem 0}
+.auth-card label{font-size:var(--type-small)}
+.auth-card input{font-size:1rem}
+.auth-password{display:flex;border:1px solid var(--line);border-radius:11px;background:var(--inset)}
+.auth-password:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.auth-password input,.auth-password input:focus-visible{border:0;background:none;outline:none}
+.auth-password button{flex:none;border:0;background:transparent;padding-inline:.65rem;color:var(--accent);font-size:.8rem}
+.auth-action{width:100%;min-height:47px}
+.auth-divider{display:flex;align-items:center;gap:.65rem;margin:.9rem 0;color:var(--sub);font-size:.76rem;text-align:center}
+.auth-divider::before,.auth-divider::after{content:"";height:1px;flex:1;background:var(--line)}
+.auth-guest-note{text-align:center;margin:.65rem 0 0}
+@media(min-width:720px){.auth-layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(1.2rem,4vw,4rem);align-items:center}.auth-features{display:flex}}

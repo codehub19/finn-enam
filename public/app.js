@@ -121,9 +121,56 @@ function bindPicker(id,onSelect,onClear=()=>{}){
 }
 function auth(){
   nav.hidden=true; logout.hidden=true;
-  main.innerHTML='<div class="auth"><div class="hero"><p class="eyebrow">YOUR NSE RESEARCH DESK</p><h1>Know what changed.</h1><p class="muted">Track portfolio filings, spot unusual moves, and research companies from primary sources.</p></div>'+panel(authMode==='register'?'Create your workspace':'Welcome back','<form id="auth"><p id="auth-error" class="error" role="alert"></p><div class="fields"><label>Email<input name="email" type="email" autocomplete="email" maxlength="200" required></label><label>Password<input name="password" type="password" autocomplete="'+(authMode==='register'?'new-password':'current-password')+'" minlength="8" maxlength="128" required></label></div><div class="actions"><button class="primary">'+(authMode==='register'?'Create account':'Sign in')+'</button>'+button(authMode==='register'?'I have an account':'Create an account','id="switch"')+'</div><p class="muted">Each new account starts with a private 18-stock sample portfolio.</p></form><button type="button" id="guest" data-pending="Opening guest workspace…">Continue as guest</button><p class="muted">Guest workspaces expire after 24 hours.</p>')+'</div>';
+  const creating=authMode==='register';
+  main.innerHTML=`<div class="auth auth-layout">
+    <aside class="auth-intro">
+      <p class="eyebrow">INDIAN EQUITY WORKSPACE</p>
+      <h1>Know what moved.<br>Understand why.</h1>
+      <p class="muted">Follow your holdings, read market briefings, and research NSE companies in one place.</p>
+      <div class="auth-features">
+        <span>${icon('folio')} Portfolio</span><span>${icon('pulse')} Briefings</span><span>${icon('search')} Research</span>
+      </div>
+    </aside>
+    <section class="auth-card" aria-labelledby="auth-title">
+      <div class="auth-switch" aria-label="Account options">
+        <button type="button" data-auth-mode="login" aria-pressed="${!creating}">Sign in</button>
+        <button type="button" data-auth-mode="register" aria-pressed="${creating}">Create account</button>
+      </div>
+      <h2 id="auth-title">${creating?'Create your FINN account':'Welcome back'}</h2>
+      <p class="muted auth-description">${creating?'Start with an 18-stock sample portfolio you can make your own.':'Sign in to open your portfolio and saved research.'}</p>
+      <form id="auth">
+        <p id="auth-error" class="error" role="alert"></p>
+        <div class="fields">
+          <label>Email address<input name="email" type="email" autocomplete="username" autocapitalize="none" maxlength="200" required></label>
+          <label>Password
+            <span class="auth-password"><input id="auth-password" name="password" type="password" autocomplete="${creating?'new-password':'current-password'}" minlength="8" maxlength="128" ${creating?'aria-describedby="password-hint"':''} required>
+            <button type="button" id="show-password" aria-controls="auth-password" aria-label="Show password">Show</button></span>
+          </label>
+          ${creating?'<small id="password-hint">Use at least 8 characters.</small>':''}
+        </div>
+        <button class="primary auth-action" data-pending="${creating?'Creating your account…':'Signing in…'}">${creating?'Create account':'Sign in'}</button>
+      </form>
+      <div class="auth-divider"><span>or explore first</span></div>
+      <button type="button" class="auth-action" id="guest" data-pending="Opening guest workspace…">Continue as guest ${icon('arrow')}</button>
+      <p class="muted auth-guest-note">No account needed. Guest sessions expire after 24 hours.</p>
+    </section>
+  </div>`;
+  for(const control of main.querySelectorAll('[data-auth-mode]'))control.onclick=()=>{
+    if(authMode===control.dataset.authMode)return;
+    const email=main.querySelector('[name="email"]').value;
+    authMode=control.dataset.authMode;
+    auth();
+    main.querySelector('[name="email"]').value=email;
+    main.querySelector('[data-auth-mode][aria-pressed="true"]').focus();
+  };
+  const password=main.querySelector('#auth-password'), toggle=main.querySelector('#show-password');
+  toggle.onclick=()=>{
+    const visible=password.type==='password';
+    password.type=visible?'text':'password';
+    toggle.textContent=visible?'Hide':'Show';
+    toggle.setAttribute('aria-label',visible?'Hide password':'Show password');
+  };
   document.querySelector('#guest').onclick=e=>act(e.currentTarget,async()=>{await api('guest',{});state=await api('state');render();});
-  document.querySelector('#switch').onclick=()=>{authMode=authMode==='register'?'login':'register';auth();};
   document.querySelector('#auth').onsubmit=e=>{
     e.preventDefault();const data=Object.fromEntries(new FormData(e.target));
     act(e.submitter,async()=>{

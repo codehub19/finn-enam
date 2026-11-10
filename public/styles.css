@@ -153,3 +153,26 @@ button,.button,nav a{transition:background var(--motion-fast),border-color var(-
 .research-summary{border-color:var(--strong-line);background:linear-gradient(120deg,var(--glint),transparent 55%),var(--inset)}
 .research-summary .row-head{margin-bottom:.4rem}
 .research-summary h3{margin:0}
+/* App screens and nested navigation */
+.route-stack{display:grid;gap:.65rem;max-width:52rem}
+.route-card,.list-link{display:grid;align-items:center;gap:.75rem;color:var(--text);text-decoration:none;min-width:0}
+.route-card{grid-template-columns:auto minmax(0,1fr) auto;padding:.88rem 1rem;border:1px solid var(--line);border-radius:15px;background:var(--panel);transition:background var(--motion-fast),border-color var(--motion-fast)}
+.route-card:hover,.list-link:hover{background:var(--lift)}
+.route-card:hover{border-color:var(--strong-line)}
+.route-card strong,.list-link strong{display:block;line-height:1.35;overflow-wrap:anywhere}
+.route-card small,.list-link small{display:block;margin-top:.22rem}
+.route-card small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.route-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--lift);color:var(--accent)}
+.route-card>.glyph,.list-link>.glyph{color:var(--accent);width:17px}
+.list-link{grid-template-columns:minmax(0,1fr) auto;border-top:1px solid var(--line);padding:.78rem .42rem;border-radius:5px}
+.list-link .tag{margin:0 .25rem .35rem 0}
+.list-link .tag+small{display:inline}
+.back-link{display:inline-flex;align-items:center;gap:.4rem;min-height:40px;margin-bottom:.4rem;text-decoration:none;font-weight:650;font-size:var(--type-small)}
+.back-link:hover{text-decoration:underline}
+.report-tabs{display:flex;gap:.35rem;overflow:auto;margin:0 0 1rem;padding:.32rem;border:1px solid var(--line);border-radius:13px;background:var(--glass);width:fit-content;max-width:100%}
+.report-tabs a{flex:none;display:flex;align-items:center;min-height:40px;padding:.4rem .75rem;border-radius:9px;font-size:var(--type-small);text-decoration:none;color:var(--sub);font-weight:700}
+.report-tabs a[aria-current],.report-tabs a:hover{color:var(--accent);background:var(--lift)}
+.report-view,.report-actions{max-width:62rem}
+.report-sources{margin-bottom:1rem}
+#filing-evidence:not(:empty){margin-top:1rem;border-top:1px solid var(--line);padding-top:.75rem}
+@media(prefers-reduced-motion:no-preference){main>.route-stack,main>.report-tabs{animation:appear var(--motion-enter) ease-out both}}

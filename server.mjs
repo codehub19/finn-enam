@@ -7,6 +7,7 @@ import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
 import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight} from './providers.mjs';
+import {worldNews} from './news.mjs';
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
 const path=resolve(process.env.FINN_DB||resolve(root,'finn.sqlite'));
@@ -181,6 +182,10 @@ async function route(req,res){
     return current;
   };
   if(method==='GET'){
+    if(p==='/api/world-news'){
+      limit('world-news:'+user.id,45,60000);
+      return json(res,200,await worldNews());
+    }
     if(p==='/api/stocks'){
       limit('stocks:'+user.id,90,60000);
       const query=(url.searchParams.get('q')??'').trim();

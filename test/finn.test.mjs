@@ -12,6 +12,20 @@ import {parseNseQuarterly,quarterlyComparison,reportInsights} from '../insights.
 import {guidanceScorecard} from '../guidance.mjs';
 import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief} from '../gemini.mjs';
 import {parseAnnouncementRss,parseDailyReport} from '../exchange.mjs';
+import {parseWorldFeed,selectWorldNews} from '../news.mjs';
+test('global news only surfaces dated official links and labels a wider lookback',()=>{
+ const feed={url:'https://www.eia.gov/rss/feed.xml',source:'EIA',topic:'Energy',filter:/oil/i};
+ const item=(title,href,date)=>'<item><title>'+title+'</title><link>'+href+'</link><pubDate>'+date+'</pubDate></item>';
+ const at=Date.parse('2026-11-10T12:00:00Z');
+ const xml='<rss>'+item('Oil supply &amp; demand','/release','2026-11-09T06:00:00Z')+item('Oil','https://invalid.example/release','2026-11-10T11:00:00Z')+item('Other release','/other','2026-11-10T09:00:00Z')+'</rss>';
+ const [row,...rest]=parseWorldFeed(xml,feed);
+ assert.equal(row.title,'Oil supply & demand');
+ assert.equal(row.url,'https://www.eia.gov/release');
+ assert.equal(rest.length,0);
+ assert.equal(selectWorldNews([row,row],at).hours,72);
+ const recent={...row,url:'https://www.eia.gov/recent',timestamp:at-3600000};
+ assert.deepEqual(selectWorldNews([row,recent],at),{hours:24,items:[recent]});
+});
 test('Gemini uses the server-side header and returns only public answer text',async()=>{
  const payload=geminiPayload('INFY',[{citation:1,type:'Annual report',evidence:'Primary evidence.'}]);
  const request=async (url,options)=>{

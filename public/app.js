@@ -15,6 +15,7 @@ const strokes={
   tune:'M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4',
   arrow:'M5 12h14m-5-5 5 5-5 5',
   plus:'M12 5v14M5 12h14',
+  globe:'M3 12h18M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c2.8 2.8 4 5.8 4 9s-1.2 6.2-4 9c-2.8-2.8-4-5.8-4-9s1.2-6.2 4-9Z',
   theme:'M12 3v18m0-18a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z'
 };
 const icon=name=>'<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="'+strokes[name]+'"/></svg>';
@@ -32,12 +33,15 @@ const panel=(title,body)=>'<section class="panel"><h2>'+title+'</h2>'+body+'</se
 const hero=(label,title,detail)=>'<section class="page-heading"><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
 const loading=(label,detail='')=>'<div class="loading" role="status"><span class="spinner" aria-hidden="true"></span><div><strong>'+escape(label)+'</strong>'+(detail?'<p class="muted">'+escape(detail)+'</p>':'')+'</div></div>';
 let state, report, researchPending, authMode='register', hours=24, timer, generation=0, installPrompt, researchSequence=0;
-const section=()=>['briefing','portfolio','research','saved','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'briefing';
+const section=()=>['briefing','portfolio','research','saved','settings'].includes(routeParts()[0])?routeParts()[0]:'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
 async function api(path,payload){
   const res=await fetch('/api/'+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const result=await res.json();
   if(!res.ok) throw Error(result.error);
+  if(payload!==undefined&&['holding','import','watch','preferences'].includes(path)){
+    for(const key of Object.keys(dashboard))if(key!=='world')delete dashboard[key];
+  }
   return result;
 }
 async function act(control,task){
@@ -124,7 +128,9 @@ logout.onclick=()=>act(logout,async()=>{
     const subscription=await registration?.pushManager.getSubscription();
     if(subscription){await api('subscription',{remove:true,endpoint:subscription.endpoint});await subscription.unsubscribe();}
   }catch(error){notify('Push cleanup failed: '+error.message);return;}
-  await api('logout',{});state=null;report=null;researchPending=null;render();
+  await api('logout',{});state=null;report=null;researchPending=null;
+  for(const key of Object.keys(dashboard))delete dashboard[key];
+  render();
 });
 function render(){
   const id=++generation;
@@ -135,58 +141,131 @@ function render(){
   for(const anchor of nav.querySelectorAll('a')) anchor.setAttribute('aria-current',anchor.hash==='#'+name?'page':'false');
   ({briefing,portfolio,research,saved,settings}[name])(id);
 }
-function article(row){
-  const canExpand=['Results','Management'].includes(row.category);
-  return '<article class="row"><div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h3>'+escape(row.title)+'</h3><p class="muted">'+escape(row.detail)+'</p><p><strong>Why it matters</strong> · '+escape(row.why)+'</p><div class="actions">'+(canExpand?button(row.category==='Results'?'See reported figures':'See leadership context','data-filing="'+escape(row.id)+'"'):'')+'<small>'+escape(row.category)+' '+link(row.url,'Original filing ↗')+'</small></div><div class="filing-detail"></div></article>';
+const dashboard={};
+const routeParts=()=>location.hash.slice(1).split('/');
+const back=(path,label)=>'<a class="back-link" href="#'+path+'"><span aria-hidden="true">←</span> '+label+'</a>';
+const routeCard=(path,iconName,title,detail)=>'<a class="route-card" href="#'+path+'"><span class="route-icon">'+icon(iconName)+'</span><span><strong>'+title+'</strong><small>'+detail+'</small></span>'+icon('arrow')+'</a>';
+const lookback=()=>'<div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>';
+const briefSource=(key,force=false)=>{
+  const cacheKey=key==='feed'?'feed-'+hours:key;
+  if(!force&&dashboard[cacheKey]&&Date.now()-dashboard[cacheKey].time<180000)return dashboard[cacheKey].promise;
+  const endpoints={feed:'digest?live=1&hours='+hours,moves:'scan?live=1',world:'world-news'};
+  const record={time:Date.now(),promise:api(endpoints[key]+(force&&key!=='world'?'&refresh=1':'')).catch(error=>({error:error.message}))};
+  dashboard[cacheKey]=record;
+  return record.promise;
+};
+function filingCard(row,fromPeers=false){
+  return '<a class="list-link" href="#briefing/filing/'+encodeURIComponent(row.id)+(fromPeers?'/peers':'')+'"><span>'+tag(row.symbol)+' <small>'+escape(when(row.timestamp))+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>';
+}
+function moveCard(row){
+  return '<article class="row"><h3>'+escape(row.symbol)+'</h3><p>'+format(row.day,'%')+(row.fallback?' reported close move':' · '+format(row.volume,'×'))+' · '+escape(row.date)+'</p><p class="muted">'+escape(row.reasons.join(' · '))+'</p><p>'+escape(row.ratios?row.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(row.fundamentalSource,'Annual filing ↗')+'</p>'+button('Open research','data-research="'+escape(row.symbol)+'"')+'</article>';
 }
 function briefing(id){
-  main.innerHTML=hero('','Briefing','Live NSE filings and completed-session moves for your portfolio.')+
-    '<div class="brief-toolbar"><div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>'+button('Run live briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div><div id="brief-status" aria-live="polite"></div>'+
-    '<div class="grid">'+panel('Portfolio filings','<div id="filings"></div>')+
-    panel('Unusual moves','<p class="muted">Price ±'+state.settings.price+'% or volume ≥ '+state.settings.volume+'× the previous 20 sessions.</p>'+button('Check price and volume','id="scan" data-pending="Checking holdings…"')+'<div id="moves"></div>')+'</div>'+
-    panel('Watchlist and sector peers','<div id="related"></div>');
-  const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), scanButton=document.querySelector('#scan');
-  const filings=document.querySelector('#filings'), related=document.querySelector('#related'), moves=document.querySelector('#moves'), status=document.querySelector('#brief-status');
-  let revision=0;
-  async function loadFilings(refresh){
-    const request=++revision;
-    filings.innerHTML=loading('Checking NSE filings…','Reviewing portfolio announcements for the selected window.');
-    related.textContent='';
-    try{
-      const data=await api('digest?live=1&hours='+hours+(refresh?'&refresh=1':''));
-      if(id!==generation||request!==revision)return;
-      if(data.error){filings.innerHTML='<p class="error">NSE filings are unavailable right now. Try running the briefing again.</p>';return;}
-      const important=data.owned.filter(r=>r.category!=='Routine'), routine=data.owned.filter(r=>r.category==='Routine');
-      filings.innerHTML='<p class="muted">'+data.owned.length+' filings · '+data.owned.filter(r=>r.alert).length+' selected alerts · Checked '+escape(when(data.checkedAt))+'</p>'+
-        (data.coverageNote?'<p class="coverage-note"><strong>'+escape(data.scope)+'</strong><br>'+escape(data.coverageNote)+'</p>':'')+
-        (important.map(article).join('')||'<p class="muted">No material portfolio filings in this window. You can widen the lookback above.</p>')+
-        (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(article).join('')+'</details>':'');
-      const peers=data.related.filter(row=>!data.watch.some(item=>item.id===row.id));
-      related.innerHTML=(data.watch.length?'<h3>Watchlist</h3>'+data.watch.map(article).join(''):'')+
-        (peers.length?'<details><summary>Sector peers ('+peers.length+')</summary>'+peers.map(article).join('')+'</details>':'')||
-        '<p class="muted">No material filings for tracked peers or watchlist companies in this window.</p>';
-    }catch(error){if(id===generation&&request===revision)filings.textContent=error.message;}
+  const [,view,raw]=routeParts();
+  if(view){briefPage(id,view,raw);return;}
+  main.innerHTML=hero('','Briefing','Your portfolio and the global events worth a closer look.')+
+    '<div class="brief-toolbar">'+lookback()+button('Run live briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div>'+
+    '<div id="brief-status" aria-live="polite"></div><div id="brief-cards" class="route-stack"></div>';
+  const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), status=document.querySelector('#brief-status');
+  const cards=document.querySelector('#brief-cards');
+  let feed,moves,world,refreshing=false;
+  function update(){
+    if(id!==generation)return;
+    const lead=world?.items?.[0];
+    const newsText=lead?escape(lead.title):world?.error?'News sources unavailable':world?'No new tracked releases':'Checking global sources…';
+    const filings=feed?.error?'Exchange filings temporarily unavailable':feed?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts':'Checking exchange filings…';
+    const moveText=moves?.error?'Price check unavailable':moves?moves.alerts.length+' flagged · '+moves.coverage+' of '+moves.total+' holdings priced':'Open to check completed sessions';
+    const related=feed?.error?'Peer filings temporarily unavailable':feed?new Set([...feed.watch,...feed.related].map(row=>row.id)).size+' recent disclosures':'Watchlist and same-sector activity';
+    cards.innerHTML=routeCard('briefing/filings','folio','Portfolio filings',filings)+routeCard('briefing/moves','pulse','Unusual moves',moveText)+
+      routeCard('briefing/world','globe','Global market news',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
   }
-  async function loadMoves(refresh){
-    moves.innerHTML=loading('Checking price and volume…','Comparing completed trading sessions.');
-    try{
-      const scan=await api('scan?live=1'+(refresh?'&refresh=1':''));
-      if(id!==generation)return;
-      moves.innerHTML='<p class="muted">'+scan.coverage+' of '+scan.total+' holdings priced'+(scan.asOf?' · Latest session '+escape(scan.asOf):'')+'.</p>'+
-        (scan.archiveCoverage?'<p class="coverage-note">'+scan.archiveCoverage+' from NSE daily reports. These use reported closes and have no 20-session volume comparison.</p>':'')+
-        (scan.alerts.map(a=>'<article class="row"><h3>'+escape(a.symbol)+'</h3><p>'+format(a.day,'%')+(a.fallback?' reported close move':' · '+format(a.volume,'×'))+' · '+escape(a.date)+'</p><p>'+escape(a.reasons.join(' · '))+'</p><p class="muted">'+escape(a.ratios?a.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(a.fundamentalSource,'Annual filing ↗')+'</p>'+button('Research','data-research="'+escape(a.symbol)+'" data-live="1"')+'</article>').join('')||'<p class="muted">'+(scan.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
-    }catch(error){moves.textContent=error.message;}
-  }
-  windowSelect.onchange=e=>{hours=Number(e.target.value);void loadFilings(false);};
-  scanButton.onclick=()=>act(scanButton,async()=>{run.disabled=true;try{await loadMoves(true);}finally{run.disabled=false;}});
-  run.onclick=()=>act(run,async()=>{
-    scanButton.disabled=true;
-    windowSelect.disabled=true;
-    status.innerHTML=loading('Building your live briefing…','Filings and price checks will appear as they finish.');
-    try{await Promise.all([loadFilings(true),loadMoves(true)]);}
-    finally{status.replaceChildren();scanButton.disabled=false;windowSelect.disabled=false;}
+  update();
+  const load=(key,force,selectedHours=hours)=>briefSource(key,force).then(result=>{
+    if(key==='feed'){if(selectedHours!==hours)return;feed=result;}
+    else if(key==='moves')moves=result;
+    else world=result;
+    update();
   });
-  void loadFilings(false);
+  windowSelect.onchange=e=>{hours=Number(e.target.value);feed=null;update();void load('feed',false);};
+  run.onclick=()=>act(run,async()=>{
+    if(refreshing)return;
+    refreshing=true;windowSelect.disabled=true;
+    status.innerHTML=loading('Updating your briefing…','Checking exchange filings, closing prices and global releases.');
+    try{await Promise.all(['feed','moves','world'].map(key=>load(key,true)));}
+    finally{status.replaceChildren();windowSelect.disabled=false;refreshing=false;}
+  });
+  void load('feed',false);void load('world',false);
+  if(dashboard.moves)void load('moves',false);
+}
+function briefPage(id,view,raw){
+  const title={filings:'Portfolio filings',moves:'Unusual moves',peers:'Watchlist and sector peers',world:'Global market news',filing:'Filing details',story:'Market news detail'}[view];
+  if(!title){location.replace('#briefing');return;}
+  const world=view==='world'||view==='story';
+  const filing=view==='filing', story=view==='story', moves=view==='moves';
+  const parent=filing?(routeParts()[3]==='peers'?'briefing/peers':'briefing/filings'):story?'briefing/world':'briefing';
+  main.innerHTML=back(parent,filing?(parent.endsWith('peers')?'Peer and watchlist filings':'Portfolio filings'):story?'Global market news':'Briefing')+hero('',title,world?'Official global releases with a short explanation of why each can matter for markets.':'')+
+    (!filing&&!story?'<div class="brief-toolbar">'+(!moves&&!world?lookback():'')+button('Refresh','id="brief-refresh" data-pending="Refreshing…"')+'</div>':'')+'<section class="panel" id="brief-detail" aria-live="polite"></section>';
+  const target=document.querySelector('#brief-detail');
+  let revision=0;
+  async function load(force=false){
+    const request=++revision;
+    target.innerHTML=loading(moves?'Checking prices…':world?'Reading global releases…':'Checking exchange filings…');
+    const data=await briefSource(moves?'moves':world?'world':'feed',force);
+    if(id!==generation||request!==revision)return;
+    if(data.error){target.innerHTML='<p class="error">'+escape(data.error)+'</p>';return;}
+    if(moves){
+      target.innerHTML='<p class="muted">'+data.coverage+' of '+data.total+' holdings priced'+(data.asOf?' · Latest session '+escape(data.asOf):'')+'.</p>'+
+        (data.archiveCoverage?'<p class="coverage-note">'+data.archiveCoverage+' from NSE daily reports, without a 20-session volume comparison.</p>':'')+
+        (data.alerts.map(moveCard).join('')||'<p class="muted">'+(data.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
+      return;
+    }
+    if(world){
+      const newsRows=data.items.map(row=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(row.id)+'"><span>'+tag(row.topic)+' <small>'+escape(row.source)+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>').join('');
+      if(story){
+        const item=data.items.find(row=>encodeURIComponent(row.id)===raw);
+        target.innerHTML=item?'<div class="row-head">'+tag(item.topic)+'<small>'+escape(when(item.timestamp))+'</small></div><h2>'+escape(item.title)+'</h2><p class="muted">'+escape(item.source)+'</p><h3>Why investors watch this</h3><p>'+escape(item.why)+'</p>'+link(item.url,'Read the official release ↗'):'<p>This story is outside the current news window.</p>';
+      }else{
+        const coverage='<p class="muted">Past '+data.hours+' hours · '+data.sourcesAvailable+' of '+data.sourcesTotal+' official feeds available</p>';
+        target.innerHTML=coverage+(data.hours>24?'<p class="coverage-note">The latest 24 hours were quiet. Showing the most recent tracked releases from the last three days.</p>':'')+
+          (newsRows||'<p>No market-related releases in the available feeds for this period.</p>');
+      }
+      return;
+    }
+    const coverage=data.coverageNote?'<p class="coverage-note">'+escape(data.coverageNote)+'</p>':'';
+    if(filing){
+      const findRow=feed=>[...(feed.owned??[]),...(feed.watch??[]),...(feed.related??[])].find(item=>encodeURIComponent(item.id)===raw);
+      let row=findRow(data);
+      if(!row&&hours!==168){
+        row=findRow(await api('digest?live=1&hours=168').catch(()=>({})));
+        if(id!==generation||request!==revision)return;
+      }
+      if(!row){target.innerHTML='<p>This filing is outside the current briefing window.</p>';return;}
+      target.innerHTML='<div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h2>'+escape(row.title)+'</h2><p>'+escape(row.detail)+'</p><h3>Why it matters</h3><p>'+escape(row.why)+'</p>'+link(row.url,'Original filing ↗')+'<div id="filing-evidence"></div>';
+      if(['Results','Management'].includes(row.category)){
+        const evidence=target.querySelector('#filing-evidence');
+        evidence.innerHTML=loading('Reading the disclosure…');
+        try{const detail=await api('filing-detail?id='+encodeURIComponent(row.id));if(id===generation)evidence.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+(detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+quarterlyHTML(detail);}
+        catch(error){evidence.textContent=error.message;}
+      }
+      return;
+    }
+    if(view==='filings'){
+      const material=data.owned.filter(row=>row.category!=='Routine');
+      const routine=data.owned.filter(row=>row.category==='Routine');
+      target.innerHTML=coverage+'<p class="muted">'+data.owned.length+' filings · Checked '+escape(when(data.checkedAt))+'</p>'+
+        (material.map(row=>filingCard(row)).join('')||'<p>No material portfolio filings in this window.</p>')+
+        (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(row=>filingCard(row)).join('')+'</details>':'');
+    }else{
+      const peers=data.related.filter(row=>!data.watch.some(item=>item.id===row.id));
+      const peerCard=row=>filingCard(row,true);
+      target.innerHTML=coverage+((data.watch.length?'<h2>Watchlist</h2>'+data.watch.map(peerCard).join(''):'')+
+        (peers.length?'<h2>Sector peers</h2>'+peers.map(peerCard).join(''):'' )||'<p>No recent material disclosures for watchlist companies or tracked peers.</p>');
+    }
+  }
+  const refresh=document.querySelector('#brief-refresh'), windowSelect=document.querySelector('#window');
+  if(refresh)refresh.onclick=()=>act(refresh,()=>load(true));
+  if(windowSelect)windowSelect.onchange=e=>{hours=Number(e.target.value);void load();};
+  void load();
 }
 function portfolio(){
   const stock=symbol=>state.catalog.find(s=>s.symbol===symbol);
@@ -258,19 +337,20 @@ function guidanceHTML(scorecard){
       '<td>'+(row.final?format(row.final.revenue,'%')+' CC growth · '+escape(row.revenueOutcome)+'<br>'+format(row.final.margin,'%')+' adjusted margin · '+escape(row.marginOutcome)+'<br><small>'+format(row.final.reportedMargin,'%')+' reported margin · '+link(row.final.source,'Year-end results')+'</small>':escape(row.revenueOutcome))+'</td></tr>').join('')+
     '</tbody></table></div><p class="muted">'+escape(scorecard.note)+' '+link(scorecard.context,'Management explanation ↗')+'</p></div>';
 }
-function reportHTML(r){
+function reportHTML(r,view='all'){
   const returns=r.price.returns;
   const inr=r.annual?.currency==='INR';
   const units=inr?'₹ crore':'USD million', divisor=inr?10000000:1000000;
-  const insights=(r.insights??[]).map(s=>'<article class="insight"><h3>'+escape(s.title)+'</h3>'+
+  const insights=(r.insights??[]).slice(0,view==='overview'?3:undefined).map(s=>'<article class="insight"><h3>'+escape(s.title)+'</h3>'+
     (s.note?'<p>'+escape(s.note)+'</p>':'')+
     (s.evidence?'<p class="muted evidence">“'+escape(s.evidence.text)+'” <a href="#source-'+escape(s.evidence.source)+'" data-source-index="'+escape(s.evidence.source)+'">['+escape(s.evidence.source)+']</a></p>':'')+
     (!s.note&&!s.evidence?'<p class="muted">Evidence was unavailable.</p>':'')+'</article>').join('');
   const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
-  return '<div class="row-head"><h2>'+escape(r.symbol)+' research</h2>'+tag(r.mode==='demo'?'Sample prices':'Live research')+'</div>'+
+  const overview=
     (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Gemini Flash'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
-    (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'')+
+    (insights?'<h3>Key findings</h3><div class="insights">'+insights+'</div>':'<p class="muted">No research findings in this snapshot.</p>');
+  const financials=
     guidanceHTML(r.guidance)+
     (r.results?'<div class="row"><h3>Latest reported quarter</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
@@ -279,18 +359,47 @@ function reportHTML(r){
     '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',format(r.price.fallback?r.price.tradedVolume:r.price.volume,r.price.fallback?'':'×'))+'</div>'+
     (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
     '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">IFRS figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>'+
-    trends+'<details class="report-sources"><summary>Sources and coverage</summary><p class="muted">'+escape(r.aiStatus)+'</p>'+
-    (r.sources.map((s,i)=>'<p data-report-source="'+(i+1)+'">['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</details>';
+    trends;
+  const sources='<div class="report-sources"><h3>Sources and coverage</h3><p class="muted">'+escape(r.aiStatus)+'</p>'+
+    (r.sources.map((s,i)=>'<p data-report-source="'+(i+1)+'">['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</div>';
+  if(view==='overview')return overview;
+  if(view==='financials')return financials;
+  if(view==='sources')return sources+(insights?'<h3>Evidence and findings</h3><div class="insights">'+insights+'</div>':'');
+  return overview+financials+sources;
+}
+function reportPage(r,base,view,snapshot=false){
+  const parent=snapshot?'saved':'research';
+  const selected=['overview','financials','sources'].includes(view)?view:'overview';
+  main.innerHTML=back(parent,snapshot?'Saved reports':'Research')+hero('',escape(r.symbol)+' research',snapshot?'Saved '+escape(when(r.createdAt)):'Company report')+
+    '<div class="report-tabs" aria-label="Report sections">'+[['overview','Overview'],['financials','Financials'],['sources','Sources']].map(([key,label])=>'<a href="#'+base+'/'+key+'" '+(selected===key?'aria-current="page"':'')+'>'+label+'</a>').join('')+'</div>'+
+    '<section class="panel report-view" data-report-base="'+base+'">'+reportHTML(r,selected)+'</section>'+
+    '<div class="actions report-actions">'+(snapshot?button('Recheck sources','data-recheck="'+escape(r.id)+'"','primary')+button('Delete report','data-delete="'+escape(r.id)+'"'):
+      button('Save report','id="save"','primary')+button(state.watch.includes(r.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(r.symbol)+'"'))+'</div>'+
+    (snapshot?'<div id="diff-'+escape(r.id)+'"></div>':'');
+  const save=document.querySelector('#save');
+  if(save)save.onclick=()=>act(save,async()=>{
+    const saved=await api('save-report',{id:r.draftId??r.id});
+    if(!state.saved.some(item=>item.id===saved.id))state.saved.unshift(saved);
+    notify('Report saved.');
+  });
 }
 const researchLoading=symbol=>loading('Researching '+symbol+'…','Fetching price history, company filings and earnings calls. Sources are checked before the report is shown.');
 function research(id){
+  const [,view,tab]=routeParts();
+  if(view==='report'&&report){reportPage(report,'research/report',tab);return;}
+  if(view==='report')history.replaceState(null,'','#research');
+  const sectorsPage=view==='sectors';
   const sectors=[...new Set(state.catalog.map(s=>s.sector))].sort();
-  main.innerHTML=hero('03 / Pull','Research desk','Look up an NSE company, compare performance, and save a report you can recheck later.')+
+  main.innerHTML=(sectorsPage?back('research','Research')+hero('','Sector leaders','Compare adjusted returns over the same trading window.'):
+    hero('','Research','Find an NSE company and open a dedicated report.')+
     '<div id="research-progress" aria-live="polite">'+(researchPending?researchLoading(researchPending):'')+'</div>'+
-    '<div class="grid">'+panel('Company search',stockPicker('research-search')+'<p class="muted">Choose a company to read the findings here. Source coverage varies by issuer.</p><p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
-    panel('Sector leaders','<form id="sector"><div class="fields"><label>Sector<select name="name">'+sectors.map(s=>'<option>'+escape(s)+'</option>').join('')+'</select></label><label>Window<select name="days"><option value="21">21 sessions</option><option value="63" selected>63 sessions</option><option value="252">252 sessions</option></select></label></div><button>Rank tracked stocks</button></form><div id="leaders"></div>')+'</div>'+
-    '<section class="panel" id="report" '+(report?'':'hidden')+'>'+ (report?reportHTML(report)+ '<div class="actions">'+button('Save report','id="save"','primary')+button(state.watch.includes(report.symbol)?'Remove from watchlist':'Add to watchlist','data-watch="'+escape(report.symbol)+'"')+'</div>':'')+'</section>';
-  bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
+    panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(s.symbol,'data-research="'+s.symbol+'"')).join('')+'</div>')+
+    '<div class="route-stack">'+(report?routeCard('research/report/overview','mark',escape(report.symbol)+' report','Return to your latest research'):'')+routeCard('research/sectors','pulse','Sector leaders','Compare tracked companies')+'</div>');
+  if(!sectorsPage){
+    bindPicker('research-search',(company,control)=>void runResearch(company.symbol,control,true));
+    return;
+  }
+  main.insertAdjacentHTML('beforeend',panel('Sector and window','<form id="sector"><div class="fields"><label>Sector<select name="name">'+sectors.map(s=>'<option>'+escape(s)+'</option>').join('')+'</select></label><label>Window<select name="days"><option value="21">21 sessions</option><option value="63" selected>63 sessions</option><option value="252">252 sessions</option></select></label></div><button>Rank tracked stocks</button></form><div id="leaders"></div>'));
   document.querySelector('#sector').onsubmit=e=>{
     e.preventDefault();const params=new URLSearchParams(new FormData(e.target));
     act(e.submitter,async()=>{
@@ -303,16 +412,10 @@ function research(id){
       }catch(error){target.textContent=error.message;}
     });
   };
-  const save=document.querySelector('#save');
-  if(save)save.onclick=()=>act(save,async()=>{
-    const saved=await api('save-report',{id:report.draftId??report.id});
-    if(!state.saved.some(r=>r.id===saved.id))state.saved.unshift(saved);
-    notify('Report saved.');
-  });
 }
 async function runResearch(symbol,control,live=false){
   if(!state)return;
-  if(section()!=='research'){location.hash='research';}
+  if(location.hash!=='#research'){location.hash='research';}
   const current=state;
   const request=++researchSequence;
   researchPending=symbol;
@@ -327,7 +430,7 @@ async function runResearch(symbol,control,live=false){
       researchPending=null;
       report=result;
       if(section()!=='research')return;
-      render();document.querySelector('#report')?.scrollIntoView({block:'start'});
+      location.hash='research/report/overview';
     }catch(error){
       if(request!==researchSequence||state!==current)return;
       researchPending=null;
@@ -338,8 +441,11 @@ async function runResearch(symbol,control,live=false){
   });
 }
 function saved(){
+  const [,view,id,tab]=routeParts();
+  const snapshot=view==='report'?state.saved.find(r=>r.id===id):null;
+  if(snapshot){reportPage(snapshot,'saved/report/'+snapshot.id,tab,true);return;}
   main.innerHTML=hero('04 / Recheck','Saved intelligence','Keep watch on companies and compare a fresh report against a saved snapshot.')+
-    '<div class="grid">'+panel('Saved reports',state.saved.map(r=>'<article class="row"><div class="row-head"><h3>'+escape(r.symbol)+'</h3>'+tag(r.mode)+'</div><p class="muted">'+escape(when(r.createdAt))+'</p><details><summary>Open snapshot</summary>'+reportHTML(r)+'</details><div class="actions">'+button('Recheck sources','data-recheck="'+r.id+'"','primary')+button('Delete','data-delete="'+r.id+'"')+'</div><div id="diff-'+r.id+'"></div></article>').join('')||'<p class="muted">Run company research and save your first snapshot.</p>')+
+    '<div class="grid">'+panel('Saved reports',state.saved.map(r=>'<a class="list-link" href="#saved/report/'+escape(r.id)+'/overview"><span><strong>'+escape(r.symbol)+'</strong><small>'+escape(when(r.createdAt))+'</small></span>'+icon('arrow')+'</a>').join('')||'<p class="muted">Run company research and save your first snapshot.</p>')+
     panel('Watchlist',state.watch.map(s=>'<div class="row row-head">'+button(escape(s),'data-research="'+escape(s)+'"')+button('Remove','data-watch="'+escape(s)+'"')+'</div>').join('')||'<p class="muted">Add a company from its research view.</p>')+'</div>';
 }
 function settings(){
@@ -387,25 +493,19 @@ main.addEventListener('click',e=>{
   if(citation){
     e.preventDefault();
     const sources=citation.closest('section, details')?.querySelector('.report-sources');
-    if(sources){sources.open=true;sources.querySelector('[data-report-source="'+citation.dataset.sourceIndex+'"]')?.scrollIntoView({block:'nearest'});}
+    if(sources){sources.querySelector('[data-report-source="'+citation.dataset.sourceIndex+'"]')?.scrollIntoView({block:'nearest'});}
+    else{
+      const base=citation.closest('[data-report-base]')?.dataset.reportBase;
+      if(base)location.hash=base+'/sources';
+    }
     return;
   }
   const control=e.target.closest('button');
   if(!control||!state)return;
   const d=control.dataset;
   if(d.research)void runResearch(d.research,control,true);
-  if(d.filing)act(control,async()=>{
-    const target=control.closest('article').querySelector('.filing-detail');
-    target.innerHTML=loading('Reading the disclosure…');
-    try{
-      const detail=await api('filing-detail?id='+encodeURIComponent(d.filing));
-      target.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+
-        (detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+
-        quarterlyHTML(detail);
-    }catch(error){target.textContent=error.message;}
-  });
   if(d.watch)act(control,async()=>{Object.assign(state,await api('watch',{symbol:d.watch,remove:state.watch.includes(d.watch)}));render();});
-  if(d.delete)act(control,async()=>{Object.assign(state,await api('remove-report',{id:d.delete}));render();});
+  if(d.delete)act(control,async()=>{Object.assign(state,await api('remove-report',{id:d.delete}));location.hash='saved';});
   if(d.recheck)act(control,async()=>{
     const target=document.querySelector('#diff-'+d.recheck);target.innerHTML=loading('Rechecking this report…','Comparing the saved report with the latest available prices and primary sources.');
     try{
@@ -414,7 +514,7 @@ main.addEventListener('click',e=>{
     }catch(error){target.textContent=error.message;}
   });
 });
-window.addEventListener('hashchange',render);
+window.addEventListener('hashchange',()=>{render();window.scrollTo(0,0);});
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;install.hidden=false;});
 window.addEventListener('appinstalled',()=>{install.hidden=true;installPrompt=null;});
 install.onclick=async()=>{await installPrompt?.prompt();install.hidden=true;installPrompt=null;};

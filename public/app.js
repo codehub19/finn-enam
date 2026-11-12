@@ -22,8 +22,37 @@ const icon=name=>'<svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="cur
 const sectionIcons={briefing:'pulse',portfolio:'folio',research:'search',saved:'mark',settings:'tune'};
 for(const a of nav.querySelectorAll('a'))a.insertAdjacentHTML('afterbegin',icon(sectionIcons[a.hash.slice(1)]));
 theme.insertAdjacentHTML('afterbegin',icon('theme'));
-const money=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2});
 const format=(n,suffix='')=>Number.isFinite(n)?n.toLocaleString('en-IN',{maximumFractionDigits:2})+suffix:'—';
+const indianUnits=[[1e12,'lakh crore'],[1e7,'crore'],[1e5,'lakh'],[1e3,'thousand']];
+const globalUnits=[[1e12,'trillion'],[1e9,'billion'],[1e6,'million'],[1e3,'thousand']];
+function compact(value,currency){
+  if(!Number.isFinite(value))return '—';
+  const units=currency&&currency!=='INR'?globalUnits:indianUnits;
+  const scale=units.find(([size])=>Math.abs(value)>=size);
+  const prefix=currency==='INR'?'₹':currency==='USD'?'US$':currency?currency+' ':'';
+  return (value<0?'−':'')+prefix+(scale?format(Math.abs(value)/scale[0])+' '+scale[1]:format(Math.abs(value)));
+}
+const smallNumbers=['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+const tens=['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+function integerWords(value){
+  if(value<20)return smallNumbers[value];
+  if(value<100)return tens[Math.floor(value/10)]+(value%10?'-'+smallNumbers[value%10]:'');
+  if(value<1000)return integerWords(Math.floor(value/100))+' hundred'+(value%100?' '+integerWords(value%100):'');
+  return integerWords(Math.floor(value/1000))+' thousand'+(value%1000?' '+integerWords(value%1000):'');
+}
+function amountWords(value,currency='INR'){
+  if(!Number.isFinite(value)||Math.abs(value)<(currency==='INR'?1e5:1e6))return '';
+  const [divisor,unit]=(currency==='INR'?indianUnits:globalUnits).find(([size])=>Math.abs(value)>=size);
+  const [whole,fraction]=(Math.abs(value)/divisor).toFixed(2).replace(/0+$/,'').replace(/\.$/,'').split('.');
+  if(!Number.isSafeInteger(Number(whole)))return '';
+  return (value<0?'minus ':'')+integerWords(Number(whole))+(fraction?' point '+[...fraction].map(d=>smallNumbers[Number(d)]).join(' '):'')+
+    ' '+unit+' '+(currency==='INR'?'rupees':currency==='USD'?'US dollars':currency);
+}
+function reportAmount(value,currency){
+  const words=amountWords(value,currency);
+  return escape(compact(value,currency))+(words?'<small class="amount-words">'+escape(words)+'</small>':'');
+}
+const diffNumber=(value,label)=>/\((INR|USD)\)$/.test(label)?compact(value,label.slice(-4,-1)):format(value);
 const when=value=>new Date(value).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
 const link=(url,label)=>/^https:\/\//.test(url??'')?'<a href="'+escape(url)+'" target="_blank" rel="noopener noreferrer">'+escape(label)+'</a>':'';
 const button=(label,attrs='',style='')=>'<button type="button" class="'+style+'" '+attrs+'>'+label+'</button>';
@@ -35,10 +64,12 @@ document.addEventListener('load',event=>{
 const topicIcon=topic=>'<span class="route-icon news-art">'+icon(topic==='Energy'||topic==='Inflation'?'pulse':topic==='India policy'?'folio':'globe')+'</span>';
 const tag=value=>'<span class="tag">'+escape(value)+'</span>';
 const metric=(label,value)=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(value)+'</strong></div>';
+const financialMetric=(label,value,currency='INR')=>'<div class="metric"><small>'+escape(label)+'</small><strong>'+escape(compact(value,currency))+'</strong>'+
+  (amountWords(value,currency)?'<small class="amount-words">'+escape(amountWords(value,currency))+'</small>':'')+'</div>';
 const panel=(title,body)=>'<section class="panel"><h2>'+title+'</h2>'+body+'</section>';
-const hero=(label,title,detail)=>'<section class="page-heading"><h1>'+title+'</h1><p class="muted">'+detail+'</p></section>';
+const hero=(label,title,detail)=>'<section class="page-heading"><h1>'+title+'</h1>'+(detail?'<p class="muted">'+detail+'</p>':'')+'</section>';
 const loading=(label,detail='')=>'<div class="loading" role="status"><span class="spinner" aria-hidden="true"></span><div><strong>'+escape(label)+'</strong>'+(detail?'<p class="muted">'+escape(detail)+'</p>':'')+'</div></div>';
-let state, report, researchPending, authMode='login', hours=24, timer, generation=0, installPrompt, researchSequence=0;
+let state, report, researchSelection, authMode='login', hours=24, timer, generation=0, installPrompt;
 const section=()=>['briefing','portfolio','research','saved','settings'].includes(routeParts()[0])?routeParts()[0]:'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
 async function api(path,payload){
@@ -187,16 +218,17 @@ logout.onclick=()=>act(logout,async()=>{
     const subscription=await registration?.pushManager.getSubscription();
     if(subscription){await api('subscription',{remove:true,endpoint:subscription.endpoint});await subscription.unsubscribe();}
   }catch(error){notify('Device notification cleanup failed: '+error.message);}
-  await api('logout',{});state=null;report=null;researchPending=null;
+  await api('logout',{});state=null;report=null;researchSelection=null;researchJobs.clear();
   for(const key of Object.keys(dashboard))delete dashboard[key];
   render();
 });
 function render(){
   const id=++generation;
   main.setAttribute('aria-busy','false');
-  if(!state){auth();return;}
+  if(!state){delete document.body.dataset.section;auth();return;}
   nav.hidden=false;logout.hidden=false;
   const name=section();
+  document.body.dataset.section=name;
   for(const anchor of nav.querySelectorAll('a')) anchor.setAttribute('aria-current',anchor.hash==='#'+name?'page':'false');
   ({briefing,portfolio,research,saved,settings}[name])(id);
 }
@@ -205,14 +237,25 @@ const routeParts=()=>location.hash.slice(1).split('/');
 const back=(path,label)=>'<a class="back-link" href="#'+path+'"><span aria-hidden="true">←</span> '+label+'</a>';
 const routeCard=(path,iconName,title,detail)=>'<a class="route-card" href="#'+path+'"><span class="route-icon">'+icon(iconName)+'</span><span><strong>'+title+'</strong><small>'+detail+'</small></span>'+icon('arrow')+'</a>';
 const lookback=()=>'<div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>';
-const briefSource=(key,force=false)=>{
-  const cacheKey=key==='feed'?'feed-'+hours:key;
-  if(!force&&dashboard[cacheKey]&&Date.now()-dashboard[cacheKey].time<180000)return dashboard[cacheKey].promise;
-  const endpoints={feed:'digest?live=1&hours='+hours,moves:'scan?live=1',world:'world-news'};
-  const record={time:Date.now(),promise:api(endpoints[key]+(force?(endpoints[key].includes('?')?'&':'?')+'refresh=1':'')).catch(error=>({error:error.message}))};
-  dashboard[cacheKey]=record;
+function briefingRequest(key,path,refresh=false){
+  if(dashboard[key]&&(!refresh||dashboard[key].pending))return dashboard[key].promise;
+  const record={pending:true};
+  record.promise=api(path).catch(error=>({error:error.message})).finally(()=>{record.pending=false;});
+  dashboard[key]=record;
   return record.promise;
-};
+}
+async function briefSource(key,refresh=false,windowHours=hours){
+  const paths={feed:'digest?live=1&hours=168',moves:'scan?live=1',world:'world-news'};
+  const path=paths[key];
+  if(refresh&&key==='feed'){
+    for(const name of Object.keys(dashboard))if(name.startsWith('filing:'))delete dashboard[name];
+  }
+  const data=await briefingRequest(key,path+(refresh?(path.includes('?')?'&':'?')+'refresh=1':''),refresh);
+  if(key!=='feed'||data.error||windowHours===168)return data;
+  const cutoff=(Date.parse(data.checkedAt)||Date.now())-windowHours*3600000;
+  const inWindow=row=>row.timestamp>=cutoff;
+  return {...data,owned:data.owned.filter(inWindow),related:data.related.filter(inWindow),watch:data.watch.filter(inWindow)};
+}
 function filingCard(row,fromPeers=false){
   return '<a class="list-link" href="#briefing/filing/'+encodeURIComponent(row.id)+(fromPeers?'/peers':'')+'"><span>'+tag(row.symbol)+' <small>'+escape(when(row.timestamp))+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>';
 }
@@ -222,8 +265,8 @@ function moveCard(row){
 function briefing(id){
   const [,view,raw]=routeParts();
   if(view){briefPage(id,view,raw);return;}
-  main.innerHTML=hero('','Briefing','Snapshots update before the open and after the close on trading days. Refresh any time.')+
-    '<div class="brief-toolbar">'+lookback()+button('Refresh briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div>'+
+  main.innerHTML='<section class="brief-overview">'+hero('','Briefing','Filings, price moves, and market news in one place.')+
+    '<div class="brief-toolbar">'+lookback()+button('Refresh briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div></section>'+
     '<div id="brief-status" aria-live="polite"></div><div id="brief-cards" class="route-stack"></div>';
   const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), status=document.querySelector('#brief-status');
   const cards=document.querySelector('#brief-cards');
@@ -240,7 +283,7 @@ function briefing(id){
       routeCard('briefing/world','globe','World news for India',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
   }
   update();
-  const load=(key,force,selectedHours=hours)=>briefSource(key,force).then(result=>{
+  const load=(key,force,selectedHours=hours)=>briefSource(key,force,selectedHours).then(result=>{
     if(key==='feed'){if(selectedHours!==hours)return;feed=result;}
     else if(key==='moves')moves=result;
     else world=result;
@@ -270,7 +313,7 @@ function briefPage(id,view,raw){
   async function load(force=false){
     const request=++revision;
     target.innerHTML=loading(moves?'Checking prices…':world?'Reading global releases…':'Checking exchange filings…');
-    const data=await briefSource(moves?'moves':world?'world':'feed',force);
+    const data=await briefSource(moves?'moves':world?'world':'feed',force,filing?168:hours);
     if(id!==generation||request!==revision)return;
     if(data.error){target.innerHTML='<p class="error">'+escape(data.error)+'</p>';return;}
     if(moves){
@@ -295,17 +338,13 @@ function briefPage(id,view,raw){
     const coverage=data.coverageNote?'<p class="coverage-note">'+escape(data.coverageNote)+'</p>':'';
     if(filing){
       const findRow=feed=>[...(feed.owned??[]),...(feed.watch??[]),...(feed.related??[])].find(item=>encodeURIComponent(item.id)===raw);
-      let row=findRow(data);
-      if(!row&&hours!==168){
-        row=findRow(await api('digest?live=1&hours=168').catch(()=>({})));
-        if(id!==generation||request!==revision)return;
-      }
+      const row=findRow(data);
       if(!row){target.innerHTML='<p>This filing is outside the current briefing window.</p>';return;}
       target.innerHTML='<div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h2>'+escape(row.title)+'</h2><p>'+escape(row.detail)+'</p><h3>Why it matters</h3><p>'+escape(row.why)+'</p>'+link(row.url,'Original filing ↗')+'<div id="filing-evidence"></div>';
       if(['Results','Management'].includes(row.category)){
         const evidence=target.querySelector('#filing-evidence');
         evidence.innerHTML=loading('Reading the disclosure…');
-        try{const detail=await api('filing-detail?id='+encodeURIComponent(row.id));if(id===generation)evidence.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+(detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+quarterlyHTML(detail);}
+        try{const detail=await briefingRequest('filing:'+row.id,'filing-detail?id='+encodeURIComponent(row.id));if(detail.error)throw Error(detail.error);if(id===generation)evidence.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+(detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+quarterlyHTML(detail);}
         catch(error){evidence.textContent=error.message;}
       }
       return;
@@ -331,7 +370,8 @@ function briefPage(id,view,raw){
 const portfolioStock=symbol=>state.catalog.find(stock=>stock.symbol===symbol);
 const holdingName=h=>h.name??portfolioStock(h.symbol)?.name??h.symbol;
 const stockPath=symbol=>'portfolio/stock/'+encodeURIComponent(symbol);
-const cash=value=>Number.isFinite(value)?money.format(value):'—';
+const cash=value=>compact(value,'INR');
+const unitPrice=value=>Number.isFinite(value)?'₹'+format(value):'—';
 const signed=(value,unit='')=>Number.isFinite(value)?(value>0?'+':'')+format(value,unit):'—';
 const tone=value=>value>0?'gain':value<0?'loss':'';
 function priceChart(series=[]){
@@ -354,18 +394,15 @@ function stockPage(symbol,tab){
     '<div class="stock-segments" aria-label="Stock screens"><a href="#'+base+'" '+(!researchView?'aria-current="page"':'')+'>Overview</a><a href="#'+base+'/overview" '+(researchView?'aria-current="page"':'')+'>Research</a></div>'+
     '<div id="stock-progress" aria-live="polite"></div><div id="stock-content"></div>';
   const target=document.querySelector('#stock-content'), progress=document.querySelector('#stock-progress');
-  const requestResearch=(control,refresh)=>act(control,async()=>{
-    progress.innerHTML=researchLoading(symbol);
-    try{
-      const result=await api('research',{symbol,live:true,reuse:!refresh,refresh});
-      if(!live())return;
-      if(!result.coverage?.financials&&!result.coverage?.documents){
-        progress.innerHTML='<p class="error">Company filings are temporarily unavailable. Try again later.</p>';return;
-      }
-      if(researchView){progress.replaceChildren();renderStockReport(result);}
-      else location.hash=base+'/overview';
-    }catch(error){if(live())progress.innerHTML='<p class="error">'+escape(error.message)+'</p>';}
-  });
+  const job=researchJobs.get(symbol);
+  if(job?.result&&job.stockUnread&&!researchView){
+    job.stockUnread=false;
+    location.hash=base+'/overview';
+    return;
+  }
+  if(job?.pending)progress.innerHTML=researchLoading(symbol);
+  if(job?.error)progress.innerHTML='<p class="error">'+escape(job.error)+'</p>';
+  const requestResearch=refresh=>startResearch(symbol,{live:true,reuse:!refresh,refresh},'stock');
   function researchControls(created){
     return '<p class="muted research-stamp">'+(created?'Last researched '+escape(when(created))+' IST':'No research run yet')+'</p>'+
       '<div class="actions">'+(created&&!researchView?'<a class="button primary" href="#'+base+'/overview">View research</a>':'')+
@@ -373,7 +410,8 @@ function stockPage(symbol,tab){
   }
   function bindResearch(created){
     const control=target.querySelector('#run-stock-research');
-    if(control)control.onclick=()=>void requestResearch(control,Boolean(created));
+    if(control)control.disabled=Boolean(job?.pending);
+    if(control)control.onclick=()=>void requestResearch(Boolean(created));
   }
   function renderStockReport(result){
     target.innerHTML=panel('Company research',researchControls(result?.createdAt))+
@@ -391,6 +429,7 @@ function stockPage(symbol,tab){
     });
   }
   if(researchView){
+    if(job?.result){job.stockUnread=false;renderStockReport(job.result);return;}
     target.innerHTML=loading('Opening saved research…');
     void api('stock-research?symbol='+encodeURIComponent(symbol)).then(result=>{if(live())renderStockReport(result.report);})
       .catch(error=>{if(live())target.innerHTML='<p class="error">'+escape(error.message)+'</p>';});
@@ -401,15 +440,15 @@ function stockPage(symbol,tab){
     const invested=holding.average*holding.quantity;
     const gain=value===null?null:value-invested;
     const move=Number.isFinite(price.day)?'<span class="stock-move '+tone(price.day)+'">'+signed(price.day,'%')+'</span>':'';
-    target.innerHTML='<section class="panel quote-card"><p class="eyebrow">Last traded session</p><div class="quote-line"><strong>'+cash(price.close)+'</strong>'+move+'</div>'+
+    target.innerHTML='<section class="panel quote-card"><p class="eyebrow">Last traded session</p><div class="quote-line"><strong>'+unitPrice(price.close)+'</strong>'+move+'</div>'+
       '<p class="muted">'+(pending?'Loading market data…':price.date?'Close · '+escape(price.date)+(price.stale?' · Last verified snapshot':''):'A completed-session price is unavailable.')+' '+link(price.source,'Price source ↗')+'</p>'+
       priceChart(price.series)+(price.historySource?'<p class="muted chart-source">'+link(price.historySource,'Historical chart source ↗')+'</p>':'')+'</section>'+
-      panel('Your position','<div class="position-grid">'+metric('Quantity',format(holding.quantity))+metric('Average cost',cash(holding.average))+metric('Invested',cash(invested))+metric('Market value',cash(value))+metric('Unrealized P/L',gain===null?'—':(gain>0?'+':'')+cash(gain))+metric('Position return',signed(gain!==null&&invested>0?100*gain/invested:null,'%'))+'</div>')+
+      panel('Your position','<div class="position-grid">'+metric('Quantity',compact(holding.quantity))+metric('Average cost',unitPrice(holding.average))+metric('Invested',cash(invested))+metric('Market value',cash(value))+metric('Unrealized P/L',gain===null?'—':(gain>0?'+':'')+cash(gain))+metric('Position return',signed(gain!==null&&invested>0?100*gain/invested:null,'%'))+'</div>')+
       (pending?'':panel('Company research',researchControls(created)));
     if(!pending)bindResearch(created);
   }
   renderQuote({},null,true);
-  void api('stock?symbol='+encodeURIComponent(symbol)).then(result=>{if(live())renderQuote(result.price,result.lastResearchedAt);})
+  void api('stock?symbol='+encodeURIComponent(symbol)).then(result=>{if(live())renderQuote(result.price,job?.result?.createdAt??result.lastResearchedAt);})
     .catch(error=>{if(live()){renderQuote();progress.innerHTML='<p class="error">'+escape(error.message)+'</p>';}});
 }
 function portfolio(){
@@ -421,7 +460,7 @@ function portfolio(){
     '<div class="brief-toolbar"><a class="button primary" href="#portfolio/edit">'+icon('tune')+' Edit holdings</a><a class="button" href="#portfolio/allocation">'+icon('folio')+' Sector allocation</a></div>'+
     panel('Holdings <small class="count-label">'+state.holdings.length+'</small>',state.holdings.length?'<div class="holdings-list">'+
       '<div class="holding-row holding-head"><span>Company</span><span>Quantity</span><span>Average cost</span></div>'+
-      state.holdings.map(h=>'<div class="holding-row"><a class="holding-company" href="#'+stockPath(h.symbol)+'">'+companyLogo(h.symbol)+'<span class="holding-copy"><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></span></a><span>'+format(h.quantity)+'</span><span>'+money.format(h.average)+'</span></div>').join('')+'</div>':
+      state.holdings.map(h=>'<div class="holding-row"><a class="holding-company" href="#'+stockPath(h.symbol)+'">'+companyLogo(h.symbol)+'<span class="holding-copy"><strong>'+escape(h.symbol)+'</strong><small>'+escape(holdingName(h))+'</small></span></a><span>'+compact(h.quantity)+'</span><span>'+unitPrice(h.average)+'</span></div>').join('')+'</div>':
       '<p class="muted">Your portfolio is empty.</p>');
 }
 function portfolioAllocation(){
@@ -444,9 +483,9 @@ function portfolioAllocation(){
     return entries.length===1?'<circle cx="100" cy="100" r="88" fill="'+colors[i]+'"/>':
       '<path d="M 100 100 L '+start+' A 88 88 0 '+(span>Math.PI?1:0)+' 1 '+point(angle)+' Z" fill="'+colors[i%colors.length]+'"/>';
   }).join('');
-  const legend=entries.map(([sector,cost],i)=>'<li><svg class="swatch" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="'+colors[i%colors.length]+'"/></svg><span>'+escape(sector)+'</span><strong>'+format(100*cost/total,'%')+'</strong><small>'+money.format(cost)+'</small></li>').join('');
+  const legend=entries.map(([sector,cost],i)=>'<li><svg class="swatch" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="'+colors[i%colors.length]+'"/></svg><span>'+escape(sector)+'</span><strong>'+format(100*cost/total,'%')+'</strong><small>'+cash(cost)+'</small></li>').join('');
   main.innerHTML=back('portfolio','Holdings')+hero('','Sector allocation','Each slice shows the sector’s share of your portfolio cost.')+
-    panel('Distribution by cost',total>0?'<div class="allocation-layout"><svg class="sector-pie" viewBox="0 0 200 200" role="img" aria-label="Pie chart of portfolio cost by sector. Exact percentages follow in the legend.">'+slices+'</svg><ul class="sector-legend">'+legend+'</ul></div><p class="muted">Total cost · '+money.format(total)+(zeroCost?' · '+zeroCost+' holdings without a positive cost are excluded.':'')+'</p>':'<p class="muted">Add a holding with a positive average cost to see sector allocation.</p>');
+    panel('Distribution by cost',total>0?'<div class="allocation-layout"><svg class="sector-pie" viewBox="0 0 200 200" role="img" aria-label="Pie chart of portfolio cost by sector. Exact percentages follow in the legend.">'+slices+'</svg><ul class="sector-legend">'+legend+'</ul></div><p class="muted">Total cost · '+cash(total)+(zeroCost?' · '+zeroCost+' holdings without a positive cost are excluded.':'')+'</p>':'<p class="muted">Add a holding with a positive average cost to see sector allocation.</p>');
 }
 function portfolioEdit(){
   main.innerHTML=back('portfolio','Holdings')+hero('','Edit holdings','Use your total quantity and average purchase cost across all purchases of the same stock.')+
@@ -489,8 +528,7 @@ function portfolioEdit(){
 function quarterlyHTML(detail){
   const q=detail.quarterly;
   if(!q)return '';
-  const divisor=detail.currency==='INR'?10000000:1000000;
-  return '<p class="muted">Quarter ended '+escape(q.period)+' · '+(detail.currency==='INR'?'₹ crore':'USD millions')+(detail.basis?' · '+escape(detail.basis):'')+' '+link(detail.source,'Reported facts ↗')+'</p><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Reported</th><th>QoQ</th><th>YoY</th></tr></thead><tbody>'+q.rows.map(row=>'<tr><td>'+escape(row.label)+'</td><td>'+format(row.value===null?null:row.value/divisor)+'</td><td>'+format(row.qoq,'%')+'</td><td>'+format(row.yoy,'%')+'</td></tr>').join('')+'</tbody></table></div>';
+  return '<p class="muted">Quarter ended '+escape(q.period)+' · '+escape(detail.currency??'INR')+(detail.basis?' · '+escape(detail.basis):'')+' '+link(detail.source,'Reported facts ↗')+'</p><div class="table-wrap numeric-table"><table><thead><tr><th>Metric</th><th>Reported</th><th>QoQ</th><th>YoY</th></tr></thead><tbody>'+q.rows.map(row=>'<tr><td>'+escape(row.label)+'</td><td>'+reportAmount(row.value,detail.currency??'INR')+'</td><td>'+format(row.qoq,'%')+'</td><td>'+format(row.yoy,'%')+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function guidanceHTML(scorecard){
   if(!scorecard)return '';
@@ -505,8 +543,7 @@ function guidanceHTML(scorecard){
 }
 function reportHTML(r,view='all'){
   const returns=r.price.returns;
-  const inr=r.annual?.currency==='INR';
-  const units=inr?'₹ crore':'USD million', divisor=inr?10000000:1000000;
+  const units=r.annual?.currency??'INR';
   const oldTitles={'Trajectory':'Multi-year trajectory','Guidance':'Management outlook','Bull vs. bear':'Bull and bear evidence'};
   const reference=n=>'<a href="#source-'+escape(n)+'" data-source-index="'+escape(n)+'">['+escape(n)+']</a>';
   const excerpt=e=>e?'<p class="muted evidence">“'+escape(e.text)+'” '+reference(e.source)+'</p>':'';
@@ -515,21 +552,20 @@ function reportHTML(r,view='all'){
     const ai=r.aiSections?.find(row=>row.title===title);
     const cases=title==='Bull vs. bear'?'<div class="case-grid"><p><strong>Bull</strong><br>'+escape(s.bull??'No verified supportive figure in this snapshot.')+'</p><p><strong>Bear</strong><br>'+escape(s.bear??(s.evidence?'See the cited risk disclosure below.':'No verified downside evidence in this snapshot.'))+'</p></div>':'';
     const evidence=excerpt(s.evidence)+excerpt(s.additionalEvidence);
-    const analysis=ai?'<p class="section-analysis"><small>Gemini synthesis</small><br>'+escape(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
+    const analysis=ai?'<p class="section-analysis"><small>Agent synthesis</small><br>'+escape(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
     return '<article class="insight report-topic"><h3>'+title+'</h3><p class="muted topic-scope">'+scope+'</p>'+
       (s.note&&!(title==='Financial snapshot'&&extra)?'<p>'+escape(s.note)+'</p>':'')+cases+analysis+evidence+extra+
       (!s.note&&!evidence&&!ai&&!cases&&!extra?'<p class="muted">No verified disclosure for this section in this run.</p>':'')+'</article>';
   }
-  const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+format(y.revenue/divisor)+'</td><td>'+format(y.income/divisor)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
-  const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap"><table><thead><tr><th>Period end</th><th>'+(r.results.periods[0].bank?'Total income':'Revenue')+' (₹ crore)</th><th>Profit after tax (₹ crore)</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+format(q.revenue/10000000)+'</td><td>'+format(q.income/10000000)+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap numeric-table"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+reportAmount(y.revenue,r.annual.currency)+'</td><td>'+reportAmount(y.income,r.annual.currency)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
+  const quarters=r.results?.periods?.length>1?'<details><summary>Reported quarterly history</summary><div class="table-wrap numeric-table"><table><thead><tr><th>Period end</th><th>'+(r.results.periods[0].bank?'Total income':'Revenue')+'</th><th>Profit after tax</th><th>Source</th></tr></thead><tbody>'+r.results.periods.map(q=>'<tr><td>'+escape(q.end)+'</td><td>'+reportAmount(q.revenue,'INR')+'</td><td>'+reportAmount(q.income,'INR')+'</td><td>'+link(q.source,'Filing ↗')+'</td></tr>').join('')+'</tbody></table></div></details>':'';
   const latest=r.results?.periods?.[0];
-  const crore=value=>Number.isFinite(value)?format(value/10000000):'—';
-  const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+(r.results.stale?' · Verified snapshot':'')+' · ₹ crore</p><div class="metrics">'+
-    metric(latest.bank?'Total income':'Revenue',crore(latest.revenue))+metric('Profit after tax',crore(latest.income))+
+  const snapshot=latest?'<p class="muted">Quarter ended '+escape(latest.end)+(r.results.stale?' · Verified snapshot':'')+'</p><div class="metrics">'+
+    financialMetric(latest.bank?'Total income':'Revenue',latest.revenue)+financialMetric('Profit after tax',latest.income)+
     metric(latest.bank?'PAT / total income':'PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
     (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
   const overview=
-    (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Gemini Flash'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
+    (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Agent synthesis'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
     insight('Business snapshot','What it does, operating segments, and reported revenue mix.')+
     insight('Financial snapshot','Revenue, margins, profit after tax, and key ratios.',snapshot)+
     insight('Bull vs. bear','Evidence that supports or challenges the investment case.');
@@ -541,12 +577,12 @@ function reportHTML(r,view='all'){
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
     (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+
-    '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?money.format(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',format(r.price.fallback?r.price.tradedVolume:r.price.volume,r.price.fallback?'':'×'))+'</div>'+
-    (returns?'<div class="table-wrap"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
-    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">Figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+metric('Annual revenue ('+units+')',format(Number.isFinite(r.annual.years[0].revenue)?r.annual.years[0].revenue/divisor:null))+metric('Annual profit ('+units+')',format(Number.isFinite(r.annual.years[0].income)?r.annual.years[0].income/divisor:null))+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>';
+    '<div class="metrics">'+metric('Close',Number.isFinite(r.price.close)?unitPrice(r.price.close):'—')+metric(r.price.fallback?'Reported close move':'Daily adjusted return',format(r.price.day,'%'))+metric(r.price.fallback?'Traded volume':'Volume / 20-session mean',(r.price.fallback?compact(r.price.tradedVolume):format(r.price.volume,'×')))+'</div>'+
+    (returns?'<div class="table-wrap numeric-table"><table><thead><tr><th>Window</th><th>Latest return</th><th>Median rolling</th><th>Observations</th></tr></thead><tbody>'+Object.entries(returns).map(([n,v])=>'<tr><td>'+n+' sessions</td><td>'+format(v.latest,'%')+'</td><td>'+format(v.median,'%')+'</td><td>'+v.observations+'</td></tr>').join('')+'</tbody></table></div>':'')+
+    '<div class="row"><h3>Annual fundamentals</h3>'+(r.annual?'<p class="muted">Figures from the annual filing through '+escape(r.annual.years[0].end)+'. '+link(r.annual.source,'Annual filing ↗')+'</p><div class="metrics">'+financialMetric('Annual revenue ('+units+')',r.annual.years[0].revenue,r.annual.currency)+financialMetric('Annual profit ('+units+')',r.annual.years[0].income,r.annual.currency)+metric('Revenue growth',format(r.annual.ratios.revenueGrowth,'%'))+metric('Profit margin',format(r.annual.ratios.netMargin,'%'))+metric('Return on equity',format(r.annual.ratios.returnOnEquity,'%'))+'</div>':'<p class="muted">No comparable annual financial facts available in this run.</p>')+'</div>';
   const outlook=insight('Narrative vs. numbers','Where management commentary agrees or diverges from comparable results.',guidanceHTML(r.guidance))+
     insight('Guidance','Explicit growth, margin, and capex targets with the period they cover.');
-  const sources='<div class="report-sources"><h3>Sources and coverage</h3><p class="muted">'+escape(r.aiStatus)+'</p>'+
+  const sources='<div class="report-sources"><h3>Sources and coverage</h3><p class="muted">'+escape(r.aiStatus?.replace(/Gemini brief/g,'Agent synthesis'))+'</p>'+
     (r.sources.map((s,i)=>'<p data-report-source="'+(i+1)+'">['+(i+1)+'] '+link(s.url,s.label)+' · <small>'+escape(s.status)+'</small></p>').join('')||'<p class="muted">No annual report or earnings-call transcript returned.</p>')+'</div>';
   if(view==='overview')return overview;
   if(view==='financials')return financials;
@@ -574,13 +610,19 @@ function reportPage(r,base,view,snapshot=false){
 const researchLoading=symbol=>loading('Researching '+symbol+'…','Fetching price history, company filings and earnings calls. Sources are checked before the report is shown.');
 function research(id){
   const [,view,tab]=routeParts();
+  const selectedJob=researchJobs.get(researchSelection);
+  if(!view&&selectedJob?.result&&selectedJob.generalUnread){
+    selectedJob.generalUnread=false;
+    location.hash='research/report/overview';
+    return;
+  }
   if(view==='report'&&report){reportPage(report,'research/report',tab);return;}
   if(view==='report')history.replaceState(null,'','#research');
   const sectorsPage=view==='sectors';
   const sectors=[...new Set(state.catalog.map(s=>s.sector))].sort();
   main.innerHTML=(sectorsPage?back('research','Research')+hero('','Sector leaders','Compare adjusted returns over the same trading window.'):
     hero('','Research','Find an NSE company and open a dedicated report.')+
-    '<div id="research-progress" aria-live="polite">'+(researchPending?researchLoading(researchPending):'')+'</div>'+
+    '<div id="research-progress" aria-live="polite">'+(selectedJob?.pending?researchLoading(researchSelection):selectedJob?.error?'<p class="error">'+escape(selectedJob.error)+'</p>':'')+'</div>'+
     panel('Company search',stockPicker('research-search')+'<p class="eyebrow">Quick picks</p><div class="chips">'+state.catalog.filter(s=>s.demo).map(s=>button(companyLogo(s.symbol)+s.symbol,'data-research="'+s.symbol+'"','ticker-button')).join('')+'</div>')+
     '<div class="route-stack">'+(report?routeCard('research/report/overview','mark',escape(report.symbol)+' report','Return to your latest research'):'')+routeCard('research/sectors','pulse','Sector leaders','Compare tracked companies')+'</div>');
   if(!sectorsPage){
@@ -601,32 +643,36 @@ function research(id){
     });
   };
 }
-async function runResearch(symbol,control,live=false){
+const researchJobs=new Map();
+function startResearch(symbol,payload,origin){
+  const existing=researchJobs.get(symbol);
+  if(existing?.pending){
+    existing[origin+'Unread']=true;
+    render();
+    return;
+  }
+  const owner=state;
+  const job={pending:true,result:existing?.result,[origin+'Unread']:true};
+  researchJobs.set(symbol,job);
+  render();
+  void api('research',{symbol,...payload}).then(result=>{
+    if(!result.coverage?.financials&&!result.coverage?.documents&&origin==='stock')throw Error('Company filings are temporarily unavailable. Try again later.');
+    if(state!==owner)return;
+    job.result=result;
+    if(researchSelection===symbol)report=result;
+  }).catch(error=>{job.error=error.message;job.stockUnread=false;job.generalUnread=false;})
+    .finally(()=>{
+      job.pending=false;
+      if(state!==owner)return;
+      const [page,view,raw]=routeParts();
+      if((page==='research'&&researchSelection===symbol)||(page==='portfolio'&&view==='stock'&&raw===encodeURIComponent(symbol)))render();
+    });
+}
+function runResearch(symbol,_control,live=false){
   if(!state)return;
-  if(location.hash!=='#research'){location.hash='research';}
-  const current=state;
-  const request=++researchSequence;
-  researchPending=symbol;
-  const progress=document.querySelector('#research-progress');
-  if(progress){progress.innerHTML=researchLoading(symbol);progress.scrollIntoView({block:'nearest'});}
-  const pickerStatus=live?document.querySelector('#research-search-status'):null;
-  if(pickerStatus)pickerStatus.textContent='Fetching live research for '+symbol+'…';
-  await act(control,async()=>{
-    try{
-      const result=await api('research',{symbol,...(live?{live:true,reuse:true}:{})});
-      if(request!==researchSequence||state!==current)return;
-      researchPending=null;
-      report=result;
-      if(section()!=='research')return;
-      location.hash='research/report/overview';
-    }catch(error){
-      if(request!==researchSequence||state!==current)return;
-      researchPending=null;
-      const currentProgress=document.querySelector('#research-progress');
-      if(currentProgress)currentProgress.innerHTML='<p class="error">'+escape(error.message)+'</p>';
-      if(pickerStatus?.isConnected)pickerStatus.textContent=error.message;
-    }
-  });
+  researchSelection=symbol;
+  if(location.hash!=='#research')location.hash='research';
+  startResearch(symbol,live?{live:true,reuse:true}:{},'general');
 }
 function saved(){
   const [,view,id,tab]=routeParts();
@@ -698,7 +744,7 @@ main.addEventListener('click',e=>{
     const target=document.querySelector('#diff-'+d.recheck);target.innerHTML=loading('Rechecking this report…','Comparing the saved report with the latest available prices and primary sources.');
     try{
       const {diff,next}=await api('recheck',{id:d.recheck});
-      target.innerHTML='<p class="muted">Checked '+escape(when(next.createdAt))+'</p>'+(diff.map(x=>'<p><strong>'+escape(x.label)+'</strong> · '+escape(typeof x.before==='number'?format(x.before):x.before)+' → '+escape(typeof x.after==='number'?format(x.after):x.after)+'</p>').join('')||'<p>No change detected in comparable fields.</p>')+'<details><summary>View fresh report</summary>'+reportHTML(next)+'</details>';
+      target.innerHTML='<p class="muted">Checked '+escape(when(next.createdAt))+'</p>'+(diff.map(x=>'<p><strong>'+escape(x.label)+'</strong> · '+escape(typeof x.before==='number'?diffNumber(x.before,x.label):x.before)+' → '+escape(typeof x.after==='number'?diffNumber(x.after,x.label):x.after)+'</p>').join('')||'<p>No change detected in comparable fields.</p>')+'<details><summary>View fresh report</summary>'+reportHTML(next)+'</details>';
     }catch(error){target.textContent=error.message;}
   });
 });

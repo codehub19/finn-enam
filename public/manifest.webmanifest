@@ -5,8 +5,8 @@
   "start_url": "/#briefing",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#08090c",
-  "theme_color": "#08090c",
+  "background_color": "#050505",
+  "theme_color": "#050505",
   "icons": [
     {
       "src": "/icon-192.png",

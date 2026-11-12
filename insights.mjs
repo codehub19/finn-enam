@@ -25,7 +25,11 @@ export function reportInsights(docs,annual,results,guidance){
   const sales=results?.quarterly?.rows.find(r=>['Revenue','Total income'].includes(r.label));
   const pat=results?.quarterly?.rows.find(r=>r.label==='Profit after tax');
   const recent=results?.periods?.[0], balance=recent?.balance, cashFlow=recent?.cashFlow;
-  const crore=value=>'₹'+fmt(value/10000000).toLocaleString('en-IN')+' crore';
+  const crore=value=>{
+    const magnitude=Math.abs(value);
+    const [divisor,unit]=magnitude>=1e12?[1e12,'lakh crore']:magnitude>=1e7?[1e7,'crore']:magnitude>=1e5?[1e5,'lakh']:[1,''];
+    return (value<0?'−':'')+'₹'+(magnitude/divisor).toLocaleString('en-IN',{maximumFractionDigits:2})+(unit?' '+unit:'');
+  };
   const quarterNote=Number.isFinite(sales?.value)?'Quarter ended '+results.quarterly.period+': '+sales.label.toLowerCase()+' '+crore(sales.value)+(Number.isFinite(pat?.value)?', profit after tax '+crore(pat.value)+(sales.value>0?', profit / '+sales.label.toLowerCase()+' '+fmt(100*pat.value/sales.value)+'%':''):'')+'.'+(Number.isFinite(sales.yoy)?' Revenue changed '+fmt(sales.yoy)+'% year over year.':''):null;
   const borrowing=Number.isFinite(balance?.current)&&Number.isFinite(balance?.noncurrent)?balance.current+balance.noncurrent:null;
   const workingCapital=Number.isFinite(balance?.currentAssets)&&Number.isFinite(balance?.currentLiabilities)?balance.currentAssets-balance.currentLiabilities:null;

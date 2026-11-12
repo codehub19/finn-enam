@@ -225,10 +225,9 @@ logout.onclick=()=>act(logout,async()=>{
 function render(){
   const id=++generation;
   main.setAttribute('aria-busy','false');
-  if(!state){delete document.body.dataset.section;auth();return;}
+  if(!state){auth();return;}
   nav.hidden=false;logout.hidden=false;
   const name=section();
-  document.body.dataset.section=name;
   for(const anchor of nav.querySelectorAll('a')) anchor.setAttribute('aria-current',anchor.hash==='#'+name?'page':'false');
   ({briefing,portfolio,research,saved,settings}[name])(id);
 }
@@ -236,7 +235,7 @@ const dashboard={};
 const routeParts=()=>location.hash.slice(1).split('/');
 const back=(path,label)=>'<a class="back-link" href="#'+path+'"><span aria-hidden="true">←</span> '+label+'</a>';
 const routeCard=(path,iconName,title,detail)=>'<a class="route-card" href="#'+path+'"><span class="route-icon">'+icon(iconName)+'</span><span><strong>'+title+'</strong><small>'+detail+'</small></span>'+icon('arrow')+'</a>';
-const lookback=()=>'<div class="controls"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>';
+const lookback=()=>'<div class="controls lookback"><label for="window">Lookback</label><select id="window">'+[24,48,72,168].map(h=>'<option '+(h===hours?'selected':'')+' value="'+h+'">'+h+' hours</option>').join('')+'</select></div>';
 function briefingRequest(key,path,refresh=false){
   if(dashboard[key]&&(!refresh||dashboard[key].pending))return dashboard[key].promise;
   const record={pending:true};
@@ -684,10 +683,20 @@ function saved(){
 }
 function settings(){
   const s=state.settings;
-  const check=(name,label,enabled)=>'<label class="check"><input name="'+escape(name)+'" type="checkbox" '+(enabled?'checked':'')+'>'+escape(label)+'</label>';
-  main.innerHTML=hero('05 / Configure','Your settings','Choose the feed, tune what counts as unusual, and manage browser notifications.')+
-    panel('Feeds & alert rules','<form id="prefs"><div class="fields"><label>Data mode<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div><div class="chips">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div><details open><summary>Notification schedule · India time</summary>'+check('pre','08:55 before market open',s.pre)+check('post','16:00 after market close',s.post)+'</details><button class="primary">Save preferences</button></form>')+
-    panel('Device notifications','<p class="muted">'+escape(state.push.enabled?'Notifications use live data, the NSE trading calendar, and this device’s browser permission.':state.push.reason)+'</p><div class="actions">'+button('Enable on this device','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+button('Send test notification','id="test-push" '+(!state.push.enabled?'disabled':''))+button('Disable on this device','id="unsubscribe"')+'</div><p class="muted" id="notification-status" role="status">Briefings are scheduled for 08:55 and 16:00 IST on regular trading days. Special sessions follow the exchange calendar.</p>');
+  const check=(name,label,enabled)=>'<label class="settings-switch"><span>'+escape(label)+'</span><input name="'+escape(name)+'" type="checkbox" role="switch" '+(enabled?'checked':'')+'></label>';
+  const settingsGroup=(title,glyph,body)=>panel('<span class="route-icon">'+icon(glyph)+'</span>'+title,body);
+  main.innerHTML=hero('','Settings','Manage your workspace, alerts, and device notifications.')+
+    '<div class="settings-layout"><form id="prefs">'+
+    settingsGroup('Workspace','folio','<label class="settings-select">Market data<select name="mode"><option value="demo">Sample data</option><option value="live" '+(state.mode==='live'?'selected':'')+'>Live providers</option></select></label>')+
+    settingsGroup('Alert rules','pulse','<div class="fields"><label>Daily price move (%)<input name="price" type="number" min=".1" max="100" step=".1" value="'+s.price+'" required></label><label>Volume multiple<input name="volume" type="number" min="1" max="100" step=".1" value="'+s.volume+'" required></label></div>'+
+      '<h3>Material announcements</h3><div class="settings-options">'+state.categories.filter(c=>c!=='Routine').map(c=>check(c,c,s.types.includes(c))).join('')+'</div>')+
+    settingsGroup('Briefing schedule','globe','<p class="muted">Regular NSE trading days · India time</p><div class="settings-options">'+
+      check('pre','Before market open · 08:55',s.pre)+check('post','After market close · 16:00',s.post)+'</div>')+
+    '<button class="primary settings-save">Save preferences</button></form>'+
+    settingsGroup('Device notifications','mark','<p class="muted" id="notification-status" role="status">'+escape(state.push.enabled?'Enable notifications on this device to receive scheduled briefings.':state.push.reason)+'</p><div class="settings-device-actions">'+
+      button('Enable notifications','id="subscribe" '+(!state.push.enabled?'disabled':''),'primary')+
+      button('Send a test','id="test-push" '+(!state.push.enabled?'disabled':''))+
+      button('Disable on this device','id="unsubscribe"')+'</div>')+'</div>';
   document.querySelector('#prefs').onsubmit=e=>{
     e.preventDefault();const f=new FormData(e.target);
     act(e.submitter,async()=>{
@@ -696,7 +705,7 @@ function settings(){
       Object.assign(state,await api('preferences',payload));render();notify('Preferences saved.');
     });
   };
-  document.querySelector('#subscribe').onclick=e=>act(e.target,async()=>{
+  document.querySelector('#subscribe').onclick=e=>act(e.currentTarget,async()=>{
     if(!window.isSecureContext||!('PushManager' in window)||!('Notification' in window))throw Error('Push is unavailable in this browser or context.');
     if(await Notification.requestPermission()!=='granted')throw Error('Notification permission was not granted.');
     const reg=await navigator.serviceWorker.ready;
@@ -705,12 +714,12 @@ function settings(){
     const sub=await reg.pushManager.getSubscription()??await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
     await api('subscription',sub.toJSON());document.querySelector('#notification-status').textContent='Notifications enabled on this device.';
   });
-  document.querySelector('#unsubscribe').onclick=e=>act(e.target,async()=>{
+  document.querySelector('#unsubscribe').onclick=e=>act(e.currentTarget,async()=>{
     const reg=await navigator.serviceWorker?.getRegistration(), sub=await reg?.pushManager.getSubscription();
     if(sub){await api('subscription',{endpoint:sub.endpoint,remove:true});await sub.unsubscribe();}
     document.querySelector('#notification-status').textContent='Device notifications disabled.';
   });
-  document.querySelector('#test-push').onclick=e=>act(e.target,async()=>{
+  document.querySelector('#test-push').onclick=e=>act(e.currentTarget,async()=>{
     const status=document.querySelector('#notification-status');
     status.textContent='Sending a test to this device…';
     try{

@@ -18,7 +18,7 @@ for size in (192, 512):
                     or 186 <= x < 380 - (y - 152) * 42 / 44 and 152 <= y < 196
                     or 186 <= x < 308 - (y - 251) * 42 / 44 and 251 <= y < 295)
             accent = 285 <= y <= 355 and 653 - y <= x <= 368
-            pixels.extend((246, 247, 251) if mark else (167, 181, 255) if accent else (20, 23, 34))
+            pixels.extend((245, 245, 245) if mark else (188, 188, 188) if accent else (23, 23, 23))
     png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
     png += chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b'')
     (PUBLIC / f'icon-{size}.png').write_bytes(png)

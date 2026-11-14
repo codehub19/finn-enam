@@ -93,7 +93,7 @@ async function snapshot(key,load,refresh=false,slot=briefSlot()){
   const job=Promise.resolve().then(load).then(value=>{
     if(value.error&&prior){
       const previous=JSON.parse(prior.value);
-      if(!previous.error)value={...previous,stale:true};
+      if(!previous.error)value={...previous,stale:true,coverageNote:'The latest refresh failed. Showing previously collected data. '+(previous.coverageNote??'')};
     }
     db.prepare('INSERT INTO briefing_cache VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET slot=excluded.slot,value=excluded.value')
       .run(key,slot??dateIST()+':manual',JSON.stringify(value));
@@ -123,7 +123,7 @@ async function digest(data,hours,refresh=false){
   const sectors=new Set(catalog.filter(s=>held.has(s.symbol)).map(s=>s.sector));
   const related=new Set(catalog.filter(s=>!held.has(s.symbol)&&sectors.has(s.sector)).map(s=>s.symbol));
   const {rows,...feed}=data.mode==='live'?await briefingFilings(refresh):await filings(hours,data.mode,refresh);
-  const cutoff=(Date.parse(feed.checkedAt)||Date.now())-hours*3600000;
+  const cutoff=Date.now()-hours*3600000;
   const ranked=rows.filter(row=>row.timestamp>=cutoff).map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
     .sort((a,b)=>Number(b.alert)-Number(a.alert)||Number(a.category==='Routine')-Number(b.category==='Routine')||b.timestamp-a.timestamp);
   return {checkedAt:new Date().toISOString(),...feed,owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
@@ -409,13 +409,15 @@ function sendPush(subscription,title,message){
 }
 async function deliver(subscription,event,title,message){
   const claimed=db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run(subscription.endpoint,event,Date.now());
-  if(!claimed.changes) return;
+  if(!claimed.changes) return true;
   try{
     await sendPush(subscription,title,message);
+    return true;
   }catch(error){
     if([404,410].includes(error.statusCode)) db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(subscription.endpoint,subscription.owner);
     else db.prepare('DELETE FROM deliveries WHERE endpoint=? AND event=?').run(subscription.endpoint,event);
     console.error('Push delivery failed:',error.statusCode??error.message);
+    return [404,410].includes(error.statusCode);
   }
 }
 let checking=false;
@@ -437,6 +439,7 @@ async function tick(){
     const symbols=[...new Set(portfolios.flatMap(data=>data.holdings.map(row=>row.symbol)))];
     await Promise.all([briefingFilings(false,key),briefingNews(false,key),
       mapLimit(symbols,6,symbol=>briefingQuote(symbol,false,key))]);
+    let retryDelivery=false;
     if(pushReady()){
       const subscribers=db.prepare('SELECT subscriptions.*,users.data AS preferences FROM subscriptions JOIN users ON owner=users.id').all();
       await mapLimit(subscribers,3,async subscription=>{
@@ -445,10 +448,11 @@ async function tick(){
         const report=await digest(data,24);
         const moves=slot.slot==='post'?await scan(data,true):null;
         const summary=report.error?'Exchange filings unavailable.':report.owned.length+' portfolio filings, '+report.owned.filter(r=>r.alert).length+' selected alerts.';
-        await deliver(subscription,key,slot.slot==='pre'?'FINN · Before the open':'FINN · After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged · '+moves.coverage+'/'+moves.total+' quotes.':''));
+        const delivered=await deliver(subscription,key,slot.slot==='pre'?'FINN · Before the open':'FINN · After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged · '+moves.coverage+'/'+moves.total+' quotes.':''));
+        if(!delivered)retryDelivery=true;
       });
     }
-    db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run('scheduler',key,Date.now());
+    if(!retryDelivery)db.prepare('INSERT OR IGNORE INTO deliveries VALUES(?,?,?)').run('scheduler',key,Date.now());
   }catch(error){console.error('Scheduler:',error.message);}
   finally{checking=false;}
 }

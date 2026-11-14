@@ -259,7 +259,7 @@ async function briefSource(key,refresh=false,windowHours=hours){
   }
   const data=await briefingRequest(key,path+(refresh?(path.includes('?')?'&':'?')+'refresh=1':''),refresh);
   if(key!=='feed'||data.error||windowHours===168)return data;
-  const cutoff=(Date.parse(data.checkedAt)||Date.now())-windowHours*3600000;
+  const cutoff=Date.now()-windowHours*3600000;
   const inWindow=row=>row.timestamp>=cutoff;
   return {...data,owned:data.owned.filter(inWindow),related:data.related.filter(inWindow),watch:data.watch.filter(inWindow)};
 }
@@ -362,7 +362,7 @@ function briefPage(id,view,raw){
     if(view==='filings'){
       const material=data.owned.filter(row=>row.category!=='Routine');
       const routine=data.owned.filter(row=>row.category==='Routine');
-      target.innerHTML=coverage+'<p class="muted">'+data.owned.length+' filings · Checked '+escape(when(data.checkedAt))+'</p>'+
+      target.innerHTML=coverage+'<p class="muted">'+data.owned.length+' filings · '+(data.stale?'Last available ':'Checked ')+escape(when(data.checkedAt))+'</p>'+
         (material.map(row=>filingCard(row)).join('')||'<p>No material portfolio filings in this window.</p>')+
         (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(row=>filingCard(row)).join('')+'</details>':'');
     }else{

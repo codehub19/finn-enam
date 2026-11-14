@@ -80,11 +80,37 @@ const loading=(label,detail='')=>'<div class="loading" role="status"><span class
 let state, report, researchSelection, authMode='login', hours=24, timer, generation=0, installPrompt;
 const section=()=>['briefing','portfolio','research','saved','settings'].includes(routeParts()[0])?routeParts()[0]:'briefing';
 function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',5500);}
+const workspaceKey='finn-workspace-v1';
+function cachedWorkspace(){
+  try{return JSON.parse(localStorage.getItem(workspaceKey));}catch{return null;}
+}
+function rememberWorkspace(){
+  if(!state)return;
+  try{
+    localStorage.setItem(workspaceKey,JSON.stringify({
+      email:state.email,guest:Boolean(state.guest),holdings:state.holdings,watch:state.watch,
+      saved:state.saved,settings:state.settings,mode:state.mode
+    }));
+  }catch{notify('Browser storage is unavailable or full.');}
+}
+async function restoreWorkspace(snapshot){
+  const csv=['symbol,quantity,average_cost',...snapshot.holdings.map(h=>[h.symbol,h.quantity,h.average].join(','))].join('\n');
+  if(snapshot.holdings.length)Object.assign(state,await api('import',{csv}));
+  else for(const h of state.holdings)Object.assign(state,await api('holding',{symbol:h.symbol,remove:true}));
+  for(const symbol of state.watch.filter(symbol=>!snapshot.watch.includes(symbol)))Object.assign(state,await api('watch',{symbol,remove:true}));
+  for(const symbol of snapshot.watch)Object.assign(state,await api('watch',{symbol}));
+  Object.assign(state,await api('preferences',{mode:snapshot.mode,settings:snapshot.settings}));
+  state.saved=snapshot.saved;
+}
 async function api(path,payload){
   const res=await fetch('/api/'+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const result=await res.json();
-  if(!res.ok) throw Error(result.error);
+  if(!res.ok) throw Object.assign(Error(result.error),{status:res.status});
   if(payload!==undefined&&['holding','import','watch','preferences'].includes(path)){
+    if(state&&Array.isArray(result.saved)){
+      const ids=new Set(result.saved.map(row=>row.id));
+      result.saved.push(...state.saved.filter(row=>!ids.has(row.id)));
+    }
     for(const key of Object.keys(dashboard))if(key!=='world')delete dashboard[key];
   }
   return result;
@@ -215,7 +241,7 @@ function auth(){
     act(e.submitter,async()=>{
       const error=document.querySelector('#auth-error');
       error.textContent='';
-      try{await api(authMode,data);state=await api('state');render();}
+      try{await api(authMode,data);state=await api('state');const previous=cachedWorkspace();if(previous&&!previous.guest&&previous.email===state.email)await restoreWorkspace(previous);render();}
       catch(failure){error.textContent=failure.message;}
     });
   };
@@ -226,7 +252,9 @@ logout.onclick=()=>act(logout,async()=>{
     const subscription=await registration?.pushManager.getSubscription();
     if(subscription){await api('subscription',{remove:true,endpoint:subscription.endpoint});await subscription.unsubscribe();}
   }catch(error){notify('Device notification cleanup failed: '+error.message);}
-  await api('logout',{});state=null;report=null;researchSelection=null;researchJobs.clear();
+  try{localStorage.removeItem(workspaceKey);}catch{}
+  try{await api('logout',{});}catch(error){notify('Browser workspace cleared. Server sign-out could not be confirmed.');}
+  state=null;report=null;researchSelection=null;researchJobs.clear();
   for(const key of Object.keys(dashboard))delete dashboard[key];
   render();
 });
@@ -234,6 +262,7 @@ function render(){
   const id=++generation;
   main.setAttribute('aria-busy','false');
   if(!state){auth();return;}
+  rememberWorkspace();
   nav.hidden=false;logout.hidden=false;
   const name=section();
   for(const anchor of nav.querySelectorAll('a')) anchor.setAttribute('aria-current',anchor.hash==='#'+name?'page':'false');
@@ -435,7 +464,8 @@ function stockPage(symbol,tab){
       const saved=await api('save-report',{id:result.draftId});
       if(!live())return;
       if(!state.saved.some(row=>row.id===saved.id))state.saved.unshift(saved);
-      notify('Report saved.');
+      rememberWorkspace();
+    notify('Report saved.');
     });
   }
   if(researchView){
@@ -614,6 +644,7 @@ function reportPage(r,base,view,snapshot=false){
   if(save)save.onclick=()=>act(save,async()=>{
     const saved=await api('save-report',{id:r.draftId??r.id});
     if(!state.saved.some(item=>item.id===saved.id))state.saved.unshift(saved);
+    rememberWorkspace();
     notify('Report saved.');
   });
 }
@@ -759,12 +790,21 @@ main.addEventListener('click',e=>{
   const d=control.dataset;
   if(d.research)void runResearch(d.research,control,true);
   if(d.watch)act(control,async()=>{Object.assign(state,await api('watch',{symbol:d.watch,remove:state.watch.includes(d.watch)}));render();});
-  if(d.delete)act(control,async()=>{Object.assign(state,await api('remove-report',{id:d.delete}));location.hash='saved';});
+  if(d.delete)act(control,async()=>{
+    try{await api('remove-report',{id:d.delete});}catch(error){if(error.status!==404)throw error;}
+    state.saved=state.saved.filter(row=>row.id!==d.delete);
+    rememberWorkspace();
+    location.hash='saved';
+  });
   if(d.recheck)act(control,async()=>{
     const target=document.querySelector('#diff-'+d.recheck);target.innerHTML=loading('Rechecking this report…','Comparing the saved report with the latest available prices and primary sources.');
     try{
-      const {diff,next}=await api('recheck',{id:d.recheck});
-      target.innerHTML='<p class="muted">Checked '+escape(when(next.createdAt))+'</p>'+(diff.map(x=>'<p><strong>'+escape(x.label)+'</strong> · '+escape(typeof x.before==='number'?diffNumber(x.before,x.label):x.before)+' → '+escape(typeof x.after==='number'?diffNumber(x.after,x.label):x.after)+'</p>').join('')||'<p>No change detected in comparable fields.</p>')+'<details><summary>View fresh report</summary>'+reportHTML(next)+'</details>';
+      const snapshot=state.saved.find(row=>row.id===d.recheck);
+      const {diff,next,restored}=await api('recheck',{id:d.recheck}).catch(async error=>{
+        if(error.status!==404||!snapshot)throw error;
+        return {diff:[],next:await api('research',{symbol:snapshot.symbol,live:snapshot.mode==='live',refresh:true}),restored:true};
+      });
+      target.innerHTML='<p class="muted">Checked '+escape(when(next.createdAt))+'</p>'+(diff.map(x=>'<p><strong>'+escape(x.label)+'</strong> · '+escape(typeof x.before==='number'?diffNumber(x.before,x.label):x.before)+' → '+escape(typeof x.after==='number'?diffNumber(x.after,x.label):x.after)+'</p>').join('')||(restored?'<p>Fresh report shown below. The original server snapshot expired.</p>':'<p>No change detected in comparable fields.</p>'))+'<details><summary>View fresh report</summary>'+reportHTML(next)+'</details>';
     }catch(error){target.textContent=error.message;}
   });
 });
@@ -773,5 +813,16 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installProm
 window.addEventListener('appinstalled',()=>{install.hidden=true;installPrompt=null;});
 install.onclick=async()=>{await installPrompt?.prompt();install.hidden=true;installPrompt=null;};
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
-try{state=await api('state');}catch(error){if(error.message!=='Sign in to continue.')notify(error.message);}
+const previousWorkspace=cachedWorkspace();
+try{
+  state=await api('state');
+  if(previousWorkspace?.email===state.email){
+    const savedIds=new Set(state.saved.map(row=>row.id));
+    state.saved.push(...previousWorkspace.saved.filter(row=>!savedIds.has(row.id)));
+  }
+}catch(error){
+  if(error.status===401&&previousWorkspace?.guest){
+    try{await api('guest',{});state=await api('state');await restoreWorkspace(previousWorkspace);}catch(failure){state=null;notify(failure.message);}
+  }else if(error.status!==401)notify(error.message);
+}
 render();

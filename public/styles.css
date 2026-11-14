@@ -345,13 +345,13 @@ nav a[aria-current=page]{color:var(--accent)}
 :root[data-theme=dark] :is(.panel,.auth-card,.route-card,.metric){
   background:var(--panel);border-color:#ffffff1f;box-shadow:inset 0 1px #ffffff08;
 }
-:root[data-theme=dark] :is(header,nav,.report-tabs,.stock-segments,.back-link){
+:root :is(header,nav,.report-tabs,.stock-segments,.back-link){
   background:var(--glass-sheen),var(--glass);border:1px solid var(--glass-edge);
   -webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px);
-  box-shadow:inset 0 1px #ffffff26,0 10px 30px #0007;
+  box-shadow:inset 0 1px #ffffff26,var(--shadow);
 }
-:root[data-theme=dark] header{border-width:0 0 1px}
-:root[data-theme=dark] .back-link{padding-inline:.85rem;border-radius:100px;color:var(--text)}
+:root header{border-width:0 0 1px}
+:root .back-link{padding-inline:.85rem;border-radius:100px;color:var(--text)}
 :root[data-theme=dark] :is(nav a,.report-tabs a,.stock-segments a)[aria-current=page]{
   background:linear-gradient(160deg,#464646,#232323);color:#fff;
   box-shadow:inset 0 1px #ffffff30,0 2px 8px #0006;
@@ -362,7 +362,7 @@ nav a[aria-current=page]{color:var(--accent)}
 }
 @media(prefers-reduced-transparency:reduce){
   :root[data-theme=dark]{--glass:#191919}
-  :root[data-theme=dark] :is(header,nav,.report-tabs,.stock-segments,.back-link){backdrop-filter:none;-webkit-backdrop-filter:none}
+  :root :is(header,nav,.report-tabs,.stock-segments,.back-link){backdrop-filter:none;-webkit-backdrop-filter:none}
 }
 
 /* Align comparable figures and give each report block a consistent rhythm. */
@@ -421,7 +421,7 @@ button .glyph,.button .glyph{width:16px;height:16px}
 :root[data-theme=light]{
  --bg:#eef3f8;--panel:var(--white);--glass:#fffffff0;--inset:#e8f1f8;--lift:#dbeaf6;
  --text:var(--charcoal);--sub:#526477;--heading:var(--navy);--accent:var(--navy);
- --action:var(--navy);--line:#0a3c6e30;
+ --action:var(--navy);--line:#0a3c6e30;--glass-edge:#0a3c6e52;--glass-sheen:linear-gradient(170deg,#fff9,transparent);
 }
 :root[data-theme=dark] body{background:radial-gradient(ellipse at 78% 0%,#282828,transparent 34rem),var(--bg)}
 :root[data-theme=dark] .brief-overview{background:linear-gradient(145deg,#303030,#151515 52%,#090909)}

@@ -52,6 +52,14 @@ function reportAmount(value,currency){
   const words=amountWords(value,currency);
   return escape(compact(value,currency))+(words?'<small class="amount-words">'+escape(words)+'</small>':'');
 }
+function displayCopy(value){
+  return escape(String(value??'').replace(/(?:₹|US\$|\$|\b(?:INR|USD)\s+)?(?<![\w.,])(?:\d{7,}|\d{1,3}(?:,\d{2,3})+,\d{3})(?:\.\d+)?(?:\s+(?:INR|USD)\b)?(?![\w]|[.,]\d)/g,match=>{
+    const number=Number(match.replace(/[^\d.]/g,''));
+    if(number<1e6||!Number.isFinite(number))return match;
+    const currency=/USD|\$/.test(match)?'USD':/INR|₹/.test(match)?'INR':undefined;
+    return compact(number,currency);
+  }));
+}
 const diffNumber=(value,label)=>/\((INR|USD)\)$/.test(label)?compact(value,label.slice(-4,-1)):format(value);
 const when=value=>new Date(value).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',dateStyle:'medium',timeStyle:'short'});
 const link=(url,label)=>/^https:\/\//.test(url??'')?'<a href="'+escape(url)+'" target="_blank" rel="noopener noreferrer">'+escape(label)+'</a>':'';
@@ -256,7 +264,7 @@ async function briefSource(key,refresh=false,windowHours=hours){
   return {...data,owned:data.owned.filter(inWindow),related:data.related.filter(inWindow),watch:data.watch.filter(inWindow)};
 }
 function filingCard(row,fromPeers=false){
-  return '<a class="list-link" href="#briefing/filing/'+encodeURIComponent(row.id)+(fromPeers?'/peers':'')+'"><span>'+tag(row.symbol)+' <small>'+escape(when(row.timestamp))+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>';
+  return '<a class="list-link" href="#briefing/filing/'+encodeURIComponent(row.id)+(fromPeers?'/peers':'')+'"><span>'+tag(row.symbol)+' <small>'+escape(when(row.timestamp))+'</small><strong>'+displayCopy(row.title)+'</strong></span>'+icon('arrow')+'</a>';
 }
 function moveCard(row){
   return '<article class="row"><h3>'+escape(row.symbol)+'</h3><p>'+format(row.day,'%')+(row.fallback?' reported close move':' · '+format(row.volume,'×'))+' · '+escape(row.date)+'</p><p class="muted">'+escape(row.reasons.join(' · '))+'</p><p>'+escape(row.ratios?row.flags.join(' · ')||'No negative readings in the available annual checks.':'Annual financial checks unavailable.')+' '+link(row.fundamentalSource,'Annual filing ↗')+'</p>'+button('Open research','data-research="'+escape(row.symbol)+'"')+'</article>';
@@ -266,20 +274,23 @@ function briefing(id){
   if(view){briefPage(id,view,raw);return;}
   main.innerHTML='<section class="brief-overview">'+hero('','Briefing','Filings, price moves, and market news in one place.')+
     '<div class="brief-toolbar">'+lookback()+button('Refresh briefing','id="run-brief" data-pending="Running briefing…"','primary')+'</div></section>'+
-    '<div id="brief-status" aria-live="polite"></div><div id="brief-cards" class="route-stack"></div>';
+    '<div id="brief-status" aria-live="polite"></div><div id="brief-cards" class="route-stack"></div><div id="brief-headlines"></div>';
   const windowSelect=document.querySelector('#window'), run=document.querySelector('#run-brief'), status=document.querySelector('#brief-status');
   const cards=document.querySelector('#brief-cards');
   let feed,moves,world,refreshing=false;
   function update(){
     if(id!==generation)return;
     const lead=world?.items?.[0];
-    const newsText=lead?escape(lead.title):world?.error?'News sources unavailable':world?'No new tracked releases':'Checking global sources…';
+    const newsText=lead?displayCopy(lead.title):world?.error?'News sources unavailable':world?'No new tracked releases':'Checking global sources…';
     const stamp=feed?.checkedAt?' · '+(feed.stale?'Last available ':'Updated ')+escape(when(feed.checkedAt)):'';
     const filings=feed?.error?'Exchange filings unavailable · try Refresh briefing':feed?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts'+stamp:'Checking exchange filings…';
     const moveText=moves?.error?'Price check unavailable':moves?moves.alerts.length+' flagged · '+moves.coverage+' of '+moves.total+' holdings priced':'Loading saved market snapshot…';
     const related=feed?.error?'Peer filings temporarily unavailable':feed?new Set([...feed.watch,...feed.related].map(row=>row.id)).size+' recent disclosures':'Watchlist and same-sector activity';
     cards.innerHTML=routeCard('briefing/filings','folio','Portfolio filings',filings)+routeCard('briefing/moves','pulse','Unusual moves',moveText)+
       routeCard('briefing/world','globe','World news for India',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
+    const headlines=document.querySelector('#brief-headlines');
+    headlines.innerHTML=world?.items?.length?panel('World headlines',world.items.slice(0,3).map(item=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(item.id)+'"><span><small>'+escape(item.source)+'</small><strong>'+displayCopy(item.title)+'</strong></span>'+icon('arrow')+'</a>').join('')):'';
+
   }
   update();
   const load=(key,force,selectedHours=hours)=>briefSource(key,force,selectedHours).then(result=>{
@@ -323,14 +334,14 @@ function briefPage(id,view,raw){
       return;
     }
     if(world){
-      const newsRows=data.items.map(row=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(row.id)+'">'+topicIcon(row.topic)+'<span class="news-copy">'+tag(row.topic)+' <small>'+escape(row.source)+'</small><strong>'+escape(row.title)+'</strong></span>'+icon('arrow')+'</a>').join('');
+      const newsRows=data.items.map(row=>'<a class="list-link" href="#briefing/story/'+encodeURIComponent(row.id)+'">'+topicIcon(row.topic)+'<span class="news-copy">'+tag(row.topic)+' <small>'+escape(row.source)+'</small><strong>'+displayCopy(row.title)+'</strong></span>'+icon('arrow')+'</a>').join('');
       if(story){
         const item=data.items.find(row=>encodeURIComponent(row.id)===raw);
-        target.innerHTML=item?'<div class="row-head">'+tag(item.topic)+'<small>'+escape(when(item.timestamp))+'</small></div><h2>'+escape(item.title)+'</h2><p class="muted">'+escape(item.source)+'</p><h3>Why investors watch this</h3><p>'+escape(item.why)+'</p>'+link(item.url,'Read the official release ↗'):'<p>This story is outside the current news window.</p>';
+        target.innerHTML=item?'<div class="row-head">'+tag(item.topic)+'<small>'+escape(when(item.timestamp))+'</small></div><h2>'+displayCopy(item.title)+'</h2><p class="muted">'+escape(item.source)+'</p><h3>Why investors watch this</h3><p>'+displayCopy(item.why)+'</p>'+link(item.url,'Read the official release ↗'):'<p>This story is outside the current news window.</p>';
       }else{
         const coverage='<p class="muted">Past '+data.hours+' hours · '+data.sourcesAvailable+' of '+data.sourcesTotal+' official feeds available</p>';
         target.innerHTML=coverage+(data.hours>24?'<p class="coverage-note">The latest 24 hours were quiet. Showing the most recent tracked releases from the last three days.</p>':'')+
-          (newsRows||'<p>No market-related releases in the available feeds for this period.</p>');
+          (newsRows?'<h2 class="news-heading">Latest headlines</h2>'+newsRows:'<p>No market-related releases in the available feeds for this period.</p>');
       }
       return;
     }
@@ -339,11 +350,11 @@ function briefPage(id,view,raw){
       const findRow=feed=>[...(feed.owned??[]),...(feed.watch??[]),...(feed.related??[])].find(item=>encodeURIComponent(item.id)===raw);
       const row=findRow(data);
       if(!row){target.innerHTML='<p>This filing is outside the current briefing window.</p>';return;}
-      target.innerHTML='<div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h2>'+escape(row.title)+'</h2><p>'+escape(row.detail)+'</p><h3>Why it matters</h3><p>'+escape(row.why)+'</p>'+link(row.url,'Original filing ↗')+'<div id="filing-evidence"></div>';
+      target.innerHTML='<div class="row-head">'+tag(row.symbol)+'<small>'+escape(when(row.timestamp))+'</small></div><h2>'+displayCopy(row.title)+'</h2><p>'+displayCopy(row.detail)+'</p><h3>Why it matters</h3><p>'+escape(row.why)+'</p>'+link(row.url,'Original filing ↗')+'<div id="filing-evidence"></div>';
       if(['Results','Management'].includes(row.category)){
         const evidence=target.querySelector('#filing-evidence');
         evidence.innerHTML=loading('Reading the disclosure…');
-        try{const detail=await briefingRequest('filing:'+row.id,'filing-detail?id='+encodeURIComponent(row.id));if(detail.error)throw Error(detail.error);if(id===generation)evidence.innerHTML='<p class="muted">'+escape(detail.note)+'</p>'+(detail.evidence?'<p>“'+escape(detail.evidence)+'”</p>':'')+quarterlyHTML(detail);}
+        try{const detail=await briefingRequest('filing:'+row.id,'filing-detail?id='+encodeURIComponent(row.id));if(detail.error)throw Error(detail.error);if(id===generation)evidence.innerHTML='<p class="muted">'+displayCopy(detail.note)+'</p>'+(detail.evidence?'<p>“'+displayCopy(detail.evidence)+'”</p>':'')+quarterlyHTML(detail);}
         catch(error){evidence.textContent=error.message;}
       }
       return;
@@ -370,7 +381,7 @@ const portfolioStock=symbol=>state.catalog.find(stock=>stock.symbol===symbol);
 const holdingName=h=>h.name??portfolioStock(h.symbol)?.name??h.symbol;
 const stockPath=symbol=>'portfolio/stock/'+encodeURIComponent(symbol);
 const cash=value=>compact(value,'INR');
-const unitPrice=value=>Number.isFinite(value)?'₹'+format(value):'—';
+const unitPrice=value=>Number.isFinite(value)&&Math.abs(value)<1e5?'₹'+format(value):compact(value,'INR');
 const signed=(value,unit='')=>Number.isFinite(value)?(value>0?'+':'')+format(value,unit):'—';
 const tone=value=>value>0?'gain':value<0?'loss':'';
 function priceChart(series=[]){
@@ -545,15 +556,15 @@ function reportHTML(r,view='all'){
   const units=r.annual?.currency??'INR';
   const oldTitles={'Trajectory':'Multi-year trajectory','Guidance':'Management outlook','Bull vs. bear':'Bull and bear evidence'};
   const reference=n=>'<a href="#source-'+escape(n)+'" data-source-index="'+escape(n)+'">['+escape(n)+']</a>';
-  const excerpt=e=>e?'<p class="muted evidence">“'+escape(e.text)+'” '+reference(e.source)+'</p>':'';
+  const excerpt=e=>e?'<p class="muted evidence">“'+displayCopy(e.text)+'” '+reference(e.source)+'</p>':'';
   function insight(title,scope,extra=''){
     const s=(r.insights??[]).find(row=>row.title===title||row.title===oldTitles[title])??{};
     const ai=r.aiSections?.find(row=>row.title===title);
     const cases=title==='Bull vs. bear'?'<div class="case-grid"><p><strong>Bull</strong><br>'+escape(s.bull??'No verified supportive figure in this snapshot.')+'</p><p><strong>Bear</strong><br>'+escape(s.bear??(s.evidence?'See the cited risk disclosure below.':'No verified downside evidence in this snapshot.'))+'</p></div>':'';
     const evidence=excerpt(s.evidence)+excerpt(s.additionalEvidence);
-    const analysis=ai?'<p class="section-analysis"><small>Agent synthesis</small><br>'+escape(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
+    const analysis=ai?'<p class="section-analysis"><small>Agent synthesis</small><br>'+displayCopy(ai.text)+' '+ai.citations.map(reference).join(' ')+'</p>':'';
     return '<article class="insight report-topic"><h3>'+title+'</h3><p class="muted topic-scope">'+scope+'</p>'+
-      (s.note&&!(title==='Financial snapshot'&&extra)?'<p>'+escape(s.note)+'</p>':'')+cases+analysis+evidence+extra+
+      (s.note&&!(title==='Financial snapshot'&&extra)?'<p>'+displayCopy(s.note)+'</p>':'')+cases+analysis+evidence+extra+
       (!s.note&&!evidence&&!ai&&!cases&&!extra?'<p class="muted">No verified disclosure for this section in this run.</p>':'')+'</article>';
   }
   const trends=r.annual?.years.length>1?'<details><summary>Annual history</summary><div class="table-wrap numeric-table"><table><thead><tr><th>Period end</th><th>Revenue ('+units+')</th><th>Profit ('+units+')</th></tr></thead><tbody>'+r.annual.years.map(y=>'<tr><td>'+escape(y.end)+'</td><td>'+reportAmount(y.revenue,r.annual.currency)+'</td><td>'+reportAmount(y.income,r.annual.currency)+'</td></tr>').join('')+'</tbody></table></div></details>':'';
@@ -564,7 +575,7 @@ function reportHTML(r,view='all'){
     metric(latest.bank?'PAT / total income':'PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
     (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
   const overview=
-    (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Agent synthesis'):'')+'</div><p class="preline">'+escape(r.narrative)+'</p></div>':'')+
+    (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Agent synthesis'):'')+'</div><p class="preline">'+displayCopy(r.narrative)+'</p></div>':'')+
     insight('Business snapshot','What it does, operating segments, and reported revenue mix.')+
     insight('Financial snapshot','Revenue, margins, profit after tax, and key ratios.',snapshot)+
     insight('Bull vs. bear','Evidence that supports or challenges the investment case.');
@@ -572,7 +583,7 @@ function reportHTML(r,view='all'){
     insight('Trajectory','Multi-year growth and margin expansion or compression.',trends)+
     insight('Balance sheet','Debt, leverage, funding structure, and working-capital cycle.')+
     insight('Cash quality','Operating cash-flow trend and conversion of profit into cash.')+
-    (r.results?'<div class="row"><h3>'+(r.results.stale?'Last verified quarter':'Latest reported quarter')+'</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+escape(r.results.note)+'</p>'+quarters+'</div>':'')+
+    (r.results?'<div class="row"><h3>'+(r.results.stale?'Last verified quarter':'Latest reported quarter')+'</h3>'+quarterlyHTML(r.results)+'<p class="muted">'+displayCopy(r.results.note)+'</p>'+quarters+'</div>':'')+
     '<p class="muted">Completed session '+escape(r.price.date??'unavailable')+' '+link(r.price.source,r.price.fallback?'NSE daily reports ↗':'Price history ↗')+'</p>'+
     (r.price.error?'<p class="error">'+escape(r.price.error)+'</p>':'')+
     (r.price.coverageNote?'<p class="coverage-note">'+escape(r.price.coverageNote)+' '+link(r.price.archive,'NSE report ↗')+'</p>':'')+

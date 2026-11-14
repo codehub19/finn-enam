@@ -408,3 +408,21 @@ button .glyph,.button .glyph{width:16px;height:16px}
 .settings-switch input:checked{background:radial-gradient(circle at 24px 50%,var(--ink) 6px,transparent 6.5px),var(--action)}
 .settings-device-actions{display:flex;flex-wrap:wrap;gap:.45rem}
 @media(min-width:760px){.settings-layout{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}}
+
+/* Deep teal workspace with distinct heading, body and metadata colors. */
+:root[data-theme=dark]{
+ --bg:#081916;--panel:#102521;--glass:#112c27e8;--inset:#0b1e1a;--lift:#193a31;
+ --text:#e3efe9;--sub:#a6bdb4;--accent:#8be4bd;--heading:#f2fff8;--line:#a8ead327;--glass-edge:#afe9d13d;
+}
+:root[data-theme=light]{
+ --bg:#eef6f2;--panel:#fff;--glass:#f4fffaed;--inset:#eaf4ef;--lift:#dcefe6;
+ --text:#28443b;--sub:#526e63;--heading:#122f25;--accent:#186248;--action:#145a42;--line:#215c4633;
+}
+:root[data-theme=dark] body{background:radial-gradient(ellipse at 78% 0%,#173e34,transparent 34rem),var(--bg)}
+:root[data-theme=dark] .brief-overview{background:linear-gradient(140deg,#1c483b,#102720 72%)}
+:root[data-theme=dark] .primary{background:linear-gradient(#b0f3d4,#74d6aa);color:#0b2b1d}
+:root[data-theme=dark] :is(nav a,.report-tabs a,.stock-segments a)[aria-current=page]{background:linear-gradient(#2a594b,#1a3b32);color:#e8fff3}
+:is(h1,h2,h3,.list-link strong,.route-card strong){color:var(--heading)}
+.panel>h2{color:var(--heading)}
+#brief-headlines{max-width:62rem;margin-top:1rem}
+.news-heading{margin:1rem 0 .35rem}

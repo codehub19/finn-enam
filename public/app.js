@@ -1,7 +1,7 @@
 const main=document.querySelector('#main'), nav=document.querySelector('#nav'), notice=document.querySelector('#notice');
 const logout=document.querySelector('#logout'), theme=document.querySelector('#theme'), install=document.querySelector('#install');
 const themeKey='finn-theme';
-document.documentElement.dataset.theme=localStorage.getItem(themeKey)??'dark';
+document.documentElement.dataset.theme=localStorage.getItem(themeKey)??'light';
 theme.onclick=()=>{
   const next=document.documentElement.dataset.theme==='dark'?'light':'dark';
   document.documentElement.dataset.theme=next;localStorage.setItem(themeKey,next);

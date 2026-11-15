@@ -218,7 +218,7 @@ async function route(req,res){
     limit('auth:'+req.socket.remoteAddress,20,600000);
     const input=await body(req);
     const email=String(input.email??'').trim().toLowerCase(), password=String(input.password??'');
-    if(!/^\S+@\S+\.\S+$/.test(email)||email.length>200||password.length<8||password.length>128) throw fail(400,'Enter an email and a password with 8–128 characters.');
+    if(!/^\S+@\S+\.\S+$/.test(email)||email.length>200||password.length<8||password.length>128) throw fail(400,'Enter an email and a password with 8â€“128 characters.');
     let user=db.prepare('SELECT * FROM users WHERE email=?').get(email);
     if(p.endsWith('register')){
       if(user) throw fail(409,'This email already has an account.');
@@ -346,7 +346,12 @@ async function route(req,res){
       const symbol=symbolOf(input.symbol);
       const mode=input.live===true?'live':data.mode;
       const prior=mode==='live'&&db.prepare('SELECT id,data FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
-      if(input.reuse===true&&prior)return json(res,200,{...JSON.parse(prior.data),draftId:prior.id});
+      if(input.reuse===true&&prior){
+        const cached=JSON.parse(prior.data);
+        if(cached.aiSections?.length||cached.narrative||!process.env.GEMINI_API_KEY?.trim()){
+          return json(res,200,{...cached,draftId:prior.id});
+        }
+      }
       const report=await research(symbol,mode,input.refresh===true);
       const verified=report.coverage?.financials||report.coverage?.documents;
       if(mode==='live'&&!verified&&prior)throw fail(503,'Fresh company filings were unavailable. Your previous research is still available.');
@@ -384,7 +389,7 @@ async function route(req,res){
       limit('test-push:'+user.id,5,600000);
       const sub=db.prepare('SELECT * FROM subscriptions WHERE owner=? AND endpoint=?').get(user.id,String(input.endpoint??''));
       if(!sub)throw fail(404,'Enable notifications on this device first.');
-      try{await sendPush(sub,'FINN · Test notification','This device can receive FINN briefings.');}
+      try{await sendPush(sub,'FINN Â· Test notification','This device can receive FINN briefings.');}
       catch(error){
         if([404,410].includes(error.statusCode))db.prepare('DELETE FROM subscriptions WHERE endpoint=? AND owner=?').run(sub.endpoint,user.id);
         throw fail(502,'The push service rejected this test. Reconnect notifications and try again.');
@@ -448,7 +453,7 @@ async function tick(){
         const report=await digest(data,24);
         const moves=slot.slot==='post'?await scan(data,true):null;
         const summary=report.error?'Exchange filings unavailable.':report.owned.length+' portfolio filings, '+report.owned.filter(r=>r.alert).length+' selected alerts.';
-        const delivered=await deliver(subscription,key,slot.slot==='pre'?'FINN · Before the open':'FINN · After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged · '+moves.coverage+'/'+moves.total+' quotes.':''));
+        const delivered=await deliver(subscription,key,slot.slot==='pre'?'FINN Â· Before the open':'FINN Â· After the close',summary+(moves?' '+moves.alerts.length+' EOD moves flagged Â· '+moves.coverage+'/'+moves.total+' quotes.':''));
         if(!delivered)retryDelivery=true;
       });
     }

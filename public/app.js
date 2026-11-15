@@ -605,6 +605,7 @@ function reportHTML(r,view='all'){
     metric(latest.bank?'PAT / total income':'PAT margin',format(latest.revenue>0&&Number.isFinite(latest.income)?100*latest.income/latest.revenue:null,'%'))+'</div>'+
     (Number.isFinite(r.annual?.ratios?.returnOnEquity)?'<p class="muted">Annual return on equity · '+format(r.annual.ratios.returnOnEquity,'%')+' · '+escape(r.annual.years[0].end)+'</p>':''):'';
   const overview=
+    (r.mode==='live'&&!r.aiSections?.length&&!r.narrative?'<p class="coverage-note">'+escape(r.aiStatus?.replace(/Gemini brief/g,'Agent synthesis')??'Agent synthesis is unavailable for this report.')+'</p>':'')+
     (r.narrative?'<div class="research-summary"><div class="row-head"><h3>Research brief</h3>'+(r.aiModel?tag('Agent synthesis'):'')+'</div><p class="preline">'+displayCopy(r.narrative)+'</p></div>':'')+
     insight('Business snapshot','What it does, operating segments, and reported revenue mix.')+
     insight('Financial snapshot','Revenue, margins, profit after tax, and key ratios.',snapshot)+

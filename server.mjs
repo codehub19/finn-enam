@@ -352,8 +352,12 @@ async function route(req,res){
           return json(res,200,{...cached,draftId:prior.id});
         }
       }
-      const report=await research(symbol,mode,input.refresh===true);
+      let report=await research(symbol,mode,input.refresh===true);
+      if(mode==='live'&&!report.coverage?.financials&&!report.coverage?.documents&&input.refresh!==true){
+        report=await research(symbol,mode,true);
+      }
       const verified=report.coverage?.financials||report.coverage?.documents;
+      if(mode==='live'&&!verified&&!prior)throw fail(503,'No readable primary filings were available for '+symbol+'. Try again later.');
       if(mode==='live'&&!verified&&prior)throw fail(503,'Fresh company filings were unavailable. Your previous research is still available.');
       const draftId=randomUUID(), serialized=JSON.stringify(report);
       db.prepare('DELETE FROM drafts WHERE expires<=?').run(Date.now());

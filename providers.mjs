@@ -248,6 +248,10 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
 const known={
+  ITC:[
+    {type:'Results release',label:'ITC September 2026 financial results',url:'https://itcportal.com/media-centre/press-releases/media-statement-financial-results-for-the-quarter-ended-30th-september-2026.html'},
+    {type:'Financial filing',label:'ITC Q2 FY27 results presentation',url:'https://itcportal.com/content/dam/itc-corporate/pdfs/financial-result/quarterly-results-2026-2027/september-2026/ITC-Quarterly-Result-Presentation-Q2-FY2027.pdf'}
+  ],
   BAJFINANCE:[
     {type:'Annual report',label:'Bajaj Finance FY26 annual report',url:'https://www.bajajfinserv.in/finance-digital-annual-report-fy26/index.html'},
     {type:'Results release',label:'Bajaj Finance Q1 FY27 investor presentation',url:'https://cms-assets.bajajfinserv.in/is/content/bajajfinance/bajaj-finance-q1-fy27-investor-presentation?fmt=pdf&scl=1'}
@@ -385,7 +389,7 @@ async function discover(symbol,refresh){
     return type?[{type,label:row.title+' · '+dateIST(new Date(row.timestamp)),url:row.url}]:[];
   });
   const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
-  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
+  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in|itcportal\.com)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
 async function document(source,refresh){
   return cached('document:'+source.url,86400000,async()=>{

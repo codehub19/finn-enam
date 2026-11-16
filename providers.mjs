@@ -248,6 +248,10 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
 const known={
+  BAJFINANCE:[
+    {type:'Annual report',label:'Bajaj Finance FY26 annual report',url:'https://www.bajajfinserv.in/finance-digital-annual-report-fy26/index.html'},
+    {type:'Results release',label:'Bajaj Finance Q1 FY27 investor presentation',url:'https://cms-assets.bajajfinserv.in/is/content/bajajfinance/bajaj-finance-q1-fy27-investor-presentation?fmt=pdf&scl=1'}
+  ],
   SBIN:[
     {type:'Results release',label:'SBI Q2 FY27 results release',url:'https://sbi.bank.in/documents/17836/0/SBI%2BPress%2BRelease%2BQ2FY27_03112026.pdf/576f87c8-635a-4099-6ece-db72ac2bed23?t=1793695786986'},
     {type:'Financial filing',label:'SBI reported results for September 2026',url:'https://sbi.bank.in/documents/17826/24401/03112026_SBIresultsep2026.pdf/0d368667-eb5f-1d2b-dd42-851e731bb793?t=1793696807875'}
@@ -376,12 +380,12 @@ async function discover(symbol,refresh){
     },refresh)
   ]);
   const rss=await rssFilings(false).catch(()=>[]);
-  const related=rss.filter(row=>row.symbol===symbol&&/\.pdf$/i.test(row.url)).flatMap(row=>{
-    const type=/transcript/i.test(row.title+' '+row.detail)?'Earnings call':row.title==='Annual report'?'Annual report':null;
+  const related=rss.filter(row=>row.symbol===symbol&&/\.(pdf|xml)(?:$|[?#])/i.test(row.url)).flatMap(row=>{
+    const type=/transcript/i.test(row.title+' '+row.detail)?'Earnings call':row.title==='Annual report'?'Annual report':row.category==='Results'?'Financial filing':null;
     return type?[{type,label:row.title+' · '+dateIST(new Date(row.timestamp)),url:row.url}]:[];
   });
   const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
-  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
+  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
 async function document(source,refresh){
   return cached('document:'+source.url,86400000,async()=>{
@@ -404,6 +408,10 @@ async function document(source,refresh){
         const {extractPdf}=await import('./pdf.mjs');
         content=await extractPdf(bytes);
       } catch {return {...source,hash,status:'PDF linked; extraction unavailable'};}
+    }else if(new URL(source.url).pathname.endsWith('.xml')){
+      const quarters=parseNseQuarterly(bytes.toString(),true).quarters;
+      content=quarters.slice(0,5).map(row=>'Quarter ended '+row.end+'. '+quarterlyComparison([row]).rows
+        .filter(metric=>Number.isFinite(metric.value)).map(metric=>metric.label+' '+metric.value+' INR').join('; ')+'.').join(' ');
     }else{
       const html=bytes.toString();
       content=(/<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1]??html)
@@ -471,7 +479,7 @@ export async function research(symbol, mode, refresh=false) {
     insights[0].note=company.name+' trades on the NSE as '+symbol+(sector?' and is tracked in the '+sector.toLowerCase()+' sector by FINN.':'.');
   }
   const guidance=mode==='live'?guidanceScorecard(symbol):null;
-  const readable=docs.flatMap((s,i)=>s.text?[{citation:i+1,type:s.type,evidence:s.text}]:[]);
+  const readable=docs.flatMap((s,i)=>s.text?[{citation:i+1,type:s.type,label:s.label,url:s.url,evidence:s.text}]:[]);
   const key=process.env.GEMINI_API_KEY?.trim();
   const model=process.env.GEMINI_MODEL?.trim()||DEFAULT_GEMINI_MODEL;
   const out={symbol,mode,createdAt:new Date().toISOString(),price,annual,results,guidance,sources:docs.map(({text,...source})=>source),insights,company,coverage:{financials:Boolean(results||annual),documents:readable.length,market:Boolean(price.date)},narrative:null,aiStatus:mode==='demo'?'Sample prices. Live mode retrieves primary documents.':readable.length?'Source highlights are available. Set GEMINI_API_KEY to enable the Gemini brief.':'Readable primary documents were unavailable for this request.'};

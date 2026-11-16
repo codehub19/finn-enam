@@ -248,6 +248,10 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
 const known={
+  SBIN:[
+    {type:'Results release',label:'SBI Q2 FY27 results release',url:'https://sbi.bank.in/documents/17836/0/SBI%2BPress%2BRelease%2BQ2FY27_03112026.pdf/576f87c8-635a-4099-6ece-db72ac2bed23?t=1793695786986'},
+    {type:'Financial filing',label:'SBI reported results for September 2026',url:'https://sbi.bank.in/documents/17826/24401/03112026_SBIresultsep2026.pdf/0d368667-eb5f-1d2b-dd42-851e731bb793?t=1793696807875'}
+  ],
   INFY:[
     {type:'Results release',label:'Infosys Q2 FY2027 financial snapshot',url:infosys+'/about/last-quarter.html'},
     {type:'Annual report',label:'Infosys FY2025–26 integrated annual report',url:infosys+'/investors/reports-filings/annual-report/annual/documents/infosys-ar-26.pdf'},
@@ -377,7 +381,7 @@ async function discover(symbol,refresh){
     return type?[{type,label:row.title+' · '+dateIST(new Date(row.timestamp)),url:row.url}]:[];
   });
   const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
-  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
+  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
 async function document(source,refresh){
   return cached('document:'+source.url,86400000,async()=>{

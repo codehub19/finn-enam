@@ -346,9 +346,9 @@ async function route(req,res){
       const symbol=symbolOf(input.symbol);
       const mode=input.live===true?'live':data.mode;
       const prior=mode==='live'&&db.prepare('SELECT id,data FROM latest_research WHERE owner=? AND symbol=?').get(user.id,symbol);
-      if(input.reuse===true&&prior){
+      if(input.reuse===true&&input.refresh!==true&&prior){
         const cached=JSON.parse(prior.data);
-        if(cached.aiSections?.length||cached.narrative||!process.env.GEMINI_API_KEY?.trim()){
+        if(Date.now()-Date.parse(cached.createdAt)<86400000&&(cached.aiSections?.length||cached.narrative||!process.env.GEMINI_API_KEY?.trim())){
           return json(res,200,{...cached,draftId:prior.id});
         }
       }

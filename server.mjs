@@ -145,7 +145,7 @@ async function scan(data,todayOnly=false,refresh=false){
     return {...row,reasons,ratios,flags,fundamentalSource:annual?.source};
   });
   const priced=results.filter(r=>r.date&&(!todayOnly||r.date===dateIST()));
-  return {alerts:checks,coverage:priced.length,archiveCoverage:priced.filter(row=>row.fallback).length,staleCoverage:priced.filter(row=>row.stale).length,total:results.length,asOf:priced.map(row=>row.date).sort().at(-1)??null};
+  return {alerts:checks,coverage:priced.length,archiveCoverage:priced.filter(row=>row.fallback).length,staleCoverage:priced.filter(row=>row.stale).length,total:results.length,volumeCoverage:priced.filter(row=>Number.isFinite(row.volume)).length,thresholds:{price:data.settings.price,volume:data.settings.volume},asOf:priced.map(row=>row.date).sort().at(-1)??null};
 }
 const publicFiles={
   '/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/sw.js':'sw.js',

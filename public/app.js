@@ -312,9 +312,9 @@ function briefing(id){
     const lead=world?.items?.[0];
     const newsText=lead?displayCopy(lead.title):world?.error?'News sources unavailable':world?'No new tracked releases':'Checking global sources…';
     const stamp=feed?.checkedAt?' · '+(feed.stale?'Last available ':'Updated ')+escape(when(feed.checkedAt)):'';
-    const filings=feed?.error?'Exchange filings unavailable · try Refresh briefing':feed?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts'+stamp:'Checking exchange filings…';
-    const moveText=moves?.error?'Price check unavailable':moves?moves.alerts.length+' flagged · '+moves.coverage+' of '+moves.total+' holdings priced':'Loading saved market snapshot…';
-    const related=feed?.error?'Peer filings temporarily unavailable':feed?new Set([...feed.watch,...feed.related].map(row=>row.id)).size+' recent disclosures':'Watchlist and same-sector activity';
+    const filings=feed?.error?'Exchange filings unavailable · try Refresh briefing':feed?(feed.owned.length?feed.owned.length+' portfolio filings · '+feed.owned.filter(row=>row.alert).length+' selected alerts':'No filings found in '+hours+' hours')+(feed.coverageNote?' · Partial coverage':'')+stamp:'Checking exchange filings…';
+    const moveText=moves?.error?'Price check unavailable':moves?(moves.alerts.length?moves.alerts.length+' flagged':moves.coverage?'No unusual moves detected':'No prices available')+(moves.asOf?' · Close '+escape(moves.asOf):'')+(moves.volumeCoverage===0&&moves.coverage?' · Volume check unavailable':''):'Loading saved market snapshot…';
+    const related=feed?.error?'Peer filings temporarily unavailable':feed?([...feed.watch,...feed.related].length?new Set([...feed.watch,...feed.related].map(row=>row.id)).size+' recent disclosures':'No disclosures found')+(feed.coverageNote?' · Partial coverage':''):'Watchlist and same-sector activity';
     cards.innerHTML=routeCard('briefing/filings','folio','Portfolio filings',filings)+routeCard('briefing/moves','pulse','Unusual moves',moveText)+
       routeCard('briefing/world','globe','World news for India',newsText)+routeCard('briefing/peers','mark','Watchlist and sector peers',related);
     const headlines=document.querySelector('#brief-headlines');
@@ -356,7 +356,8 @@ function briefPage(id,view,raw){
     if(id!==generation||request!==revision)return;
     if(data.error){target.innerHTML='<p class="error">'+escape(data.error)+'</p>';return;}
     if(moves){
-      target.innerHTML='<p class="muted">'+data.coverage+' of '+data.total+' holdings priced'+(data.asOf?' · Latest session '+escape(data.asOf):'')+'.</p>'+
+      const rule=data.thresholds?'<p class="muted">Alert thresholds · '+format(data.thresholds.price,'%')+' price move or '+format(data.thresholds.volume,'×')+' volume. Volume checked for '+data.volumeCoverage+' of '+data.total+' holdings.</p>':'';
+      target.innerHTML=rule+'<p class="muted">'+data.coverage+' of '+data.total+' holdings priced'+(data.asOf?' · Latest session '+escape(data.asOf):'')+'.</p>'+
         (data.staleCoverage?'<p class="coverage-note">'+data.staleCoverage+' prices came from the last verified snapshot.</p>':'')+
         (data.archiveCoverage?'<p class="coverage-note">'+data.archiveCoverage+' from NSE daily reports, without a 20-session volume comparison.</p>':'')+
         (data.alerts.map(moveCard).join('')||'<p class="muted">'+(data.coverage?'No thresholds crossed in the available data.':'Price data unavailable.')+'</p>');
@@ -392,7 +393,7 @@ function briefPage(id,view,raw){
       const material=data.owned.filter(row=>row.category!=='Routine');
       const routine=data.owned.filter(row=>row.category==='Routine');
       target.innerHTML=coverage+'<p class="muted">'+data.owned.length+' filings · '+(data.stale?'Last available ':'Checked ')+escape(when(data.checkedAt))+'</p>'+
-        (material.map(row=>filingCard(row)).join('')||'<p>No material portfolio filings in this window.</p>')+
+        (material.map(row=>filingCard(row)).join('')||'<p>No material portfolio filings found in the selected window. Try a longer lookback.</p>')+
         (routine.length?'<details><summary>Routine filings ('+routine.length+')</summary>'+routine.map(row=>filingCard(row)).join('')+'</details>':'');
     }else{
       const peers=data.related.filter(row=>!data.watch.some(item=>item.id===row.id));

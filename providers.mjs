@@ -247,7 +247,13 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
 }
 const infosys='https://www.infosys.com';
 const sec='https://www.sec.gov/Archives/edgar/data/';
+const ntpcResults='https://ntpc.co.in/sites/default/files/financial_results/2026/QFRQ2FY27%20Final.pdf';
 const known={
+  NTPC:[
+    {type:'Financial filing',label:'NTPC September 2026 financial statements',url:ntpcResults},
+    {type:'Results release',label:'NTPC Q2 FY27 analyst presentation',url:'https://ntpc.co.in/sites/default/files/conference_call/2026/NTPC_OFS_30.09.2026.pdf'},
+    {type:'Earnings call',label:'NTPC Q2 FY27 earnings call transcript',url:'https://ntpc.co.in/sites/default/files/conference_call/2026/6_%20Disclosure%20for%20Transcript%20of%20Earnings%20Conference%20Call%20Q2%20FY27_Signed.pdf'}
+  ],
   ITC:[
     {type:'Results release',label:'ITC September 2026 financial results',url:'https://itcportal.com/media-centre/press-releases/media-statement-financial-results-for-the-quarter-ended-30th-september-2026.html'},
     {type:'Financial filing',label:'ITC Q2 FY27 results presentation',url:'https://itcportal.com/content/dam/itc-corporate/pdfs/financial-result/quarterly-results-2026-2027/september-2026/ITC-Quarterly-Result-Presentation-Q2-FY2027.pdf'}
@@ -337,6 +343,16 @@ export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
     .sort((a,b)=>b.period-a.period||Number(b.consolidated==='Consolidated')-Number(a.consolidated==='Consolidated')||b.filed-a.filed);
   const chosen=candidates[0];
   const saved=verified.results[symbol];
+  if(symbol==='NTPC'&&!chosen&&Date.parse('2026-10-31')<=asOf){
+    // Standalone amounts in crore, transcribed from the issuer filing and analyst presentation.
+    const periods=[
+      ['2026-09-30',45752,11980,5319.94],
+      ['2026-06-30',43831.86,13309,5342.36],
+      ['2025-09-30',39164.82,11542,4653.33]
+    ].map(([end,revenue,ebitda,income])=>({end,revenue:revenue*1e7,ebitda:ebitda*1e7,income:income*1e7,source:ntpcResults}));
+    return {quarterly:quarterlyComparison(periods),years:[],periods,currency:'INR',source:ntpcResults,
+      basis:'Standalone',stale:true,note:'Verified issuer snapshot for September 2026. EBITDA comes from the Q2 FY27 analyst presentation.'};
+  }
   const fallback=()=>saved&&Date.parse(saved.quarterly.period)<=asOf?{
     ...saved,stale:true,note:'Reported NSE figures from the verified '+verified.checkedAt.slice(0,10)+' snapshot. Live filing verification was unavailable.'
   }:null;
@@ -389,7 +405,7 @@ async function discover(symbol,refresh){
     return type?[{type,label:row.title+' · '+dateIST(new Date(row.timestamp)),url:row.url}]:[];
   });
   const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
-  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in|itcportal\.com)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
+  return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in|itcportal\.com|ntpc\.co\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
 async function document(source,refresh){
   return cached('document:'+source.url,86400000,async()=>{

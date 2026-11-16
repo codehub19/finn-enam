@@ -49,6 +49,7 @@ export function companyLogo(symbol){
   });
 }
 const equityDirectory='https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv';
+const bundledDirectory=JSON.parse(await readFile(new URL('./config/nse-equities.json',import.meta.url),'utf8'));
 let lastDirectory, directoryRetryAt=0;
 export function parseEquityDirectory(csv) {
   const rows=csv.replace(/^\uFEFF/,'').trim().split(/\r?\n/).map(line=>
@@ -73,8 +74,8 @@ async function loadEquityDirectory(){
     });
   }catch{
     if(Date.now()>=directoryRetryAt) directoryRetryAt=Date.now()+45000;
-    status=lastDirectory?'cached':'sample';
-    rows=lastDirectory??catalog.map(stock=>({...stock,exchange:'NSE'}));
+    status=lastDirectory?'cached':'snapshot';
+    rows=lastDirectory??bundledDirectory;
   }
   return {rows,status};
 }

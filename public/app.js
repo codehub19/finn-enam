@@ -150,7 +150,7 @@ function bindPicker(id,onSelect,onClear=()=>{}){
       try{
         const data=await api('stocks?q='+encodeURIComponent(query));
         if(current!==revision||!input.isConnected)return;
-        const source={live:'NSE equity directory',cached:'Last available NSE directory',sample:'NSE unavailable · sample companies only'}[data.status];
+        const source={live:'NSE equity directory',cached:'Last available NSE directory',snapshot:'NSE directory snapshot'}[data.status];
         status.textContent=source+' · '+(data.results.length?data.results.length+' matches shown':'No matches');
         for(const stock of data.results){
           const control=document.createElement('button');

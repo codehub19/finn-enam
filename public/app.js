@@ -104,8 +104,14 @@ async function restoreWorkspace(snapshot){
 }
 async function api(path,payload){
   const res=await fetch('/api/'+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const result=await res.json();
-  if(!res.ok) throw Object.assign(Error(result.error),{status:res.status});
+  const failure=message=>Object.assign(Error(message),{status:res.status});
+  let result;
+  try{result=await res.json();}
+  catch{
+    if(res.status>=500)throw failure('FINN could not finish the request (HTTP '+res.status+'). Please try again.');
+    throw failure('FINN received an unexpected server response (HTTP '+res.status+').');
+  }
+  if(!res.ok)throw failure(result?.error||'Request failed (HTTP '+res.status+').');
   if(payload!==undefined&&['holding','import','watch','preferences'].includes(path)){
     if(state&&Array.isArray(result.saved)){
       const ids=new Set(result.saved.map(row=>row.id));

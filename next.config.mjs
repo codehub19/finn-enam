@@ -1,6 +1,7 @@
 const backend = 'http://127.0.0.1:' + (process.env.FINN_API_PORT || '4174');
 
 export default {
+  experimental: { proxyTimeout: 120_000 },
   async rewrites() {
     return [
       { source: '/api/:path*', destination: backend + '/api/:path*' },

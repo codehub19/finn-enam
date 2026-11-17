@@ -46,3 +46,30 @@ export async function generateGeminiBrief({key,model=DEFAULT_GEMINI_MODEL,payloa
   if(!candidate||!['STOP','MAX_TOKENS'].includes(candidate.finishReason??'STOP'))return '';
   return (candidate.content?.parts??[]).filter(p=>!p.thought&&typeof p.text==='string').map(p=>p.text).join('\n').trim();
 }
+
+
+const filingHosts=new Set(['nsearchives.nseindia.com','archives.nseindia.com','www.bseindia.com','bseindia.com']);
+export function discoveredFilingUrls(candidate){
+  if(!candidate?.groundingMetadata?.groundingChunks?.length)return [];
+  const output=(candidate.content?.parts??[]).filter(part=>!part.thought).map(part=>part.text??'').join('\n');
+  return [...new Set(output.split(/\r?\n/).flatMap(line=>{
+    const url=URL.parse(line.trim());
+    if(!url||url.protocol!=='https:'||url.username||url.password||url.port||!filingHosts.has(url.hostname))return [];
+    const archivePath=/^\/(?:corporate|annual_reports|xml-data\/corpfiling)\//i;
+    return archivePath.test(url.pathname)&&/\.(pdf|xml)$/i.test(url.pathname)?[url.href]:[];
+  }))].slice(0,3);
+}
+
+export async function discoverGeminiFilings({key,model=DEFAULT_GEMINI_MODEL,company,request=fetch}){
+  if(!/^gemini-[a-z0-9.-]+$/i.test(model))throw Error('Invalid GEMINI_MODEL.');
+  const response=await request('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent',{
+    method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},signal:AbortSignal.timeout(22000),
+    body:JSON.stringify({
+      tools:[{google_search:{}}],
+      contents:[{role:'user',parts:[{text:'Use Google Search to find up to three recent official NSE or BSE archive PDF or XML documents for this exact company. Prefer a financial results filing, annual report and earnings transcript. Return only original direct document URLs, one per line. No Markdown, redirects, news articles, invented URLs or summaries. Company: '+JSON.stringify(company)}]}],
+      generationConfig:{maxOutputTokens:1500,...(/^gemini-3[.-]/.test(model)?{thinkingConfig:{thinkingLevel:'low'}}:{})}
+    })
+  });
+  if(!response.ok)throw Error('Document search returned HTTP '+response.status);
+  return discoveredFilingUrls((await response.json()).candidates?.[0]);
+}

@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {catalog,classify,dateIST,demoBars,metrics,fundamentals} from './data.mjs';
 import {extractEvidence,reportInsights,quarterlyComparison,parseNseQuarterly} from './insights.mjs';
 import {guidanceScorecard} from './guidance.mjs';
-import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections} from './gemini.mjs';
+import {DEFAULT_GEMINI_MODEL,geminiPayload,generateGeminiBrief,parseGeminiSections,discoverGeminiFilings} from './gemini.mjs';
 import {parseDailyReport,parseAnnouncementRss} from './exchange.mjs';
 
 const verified=JSON.parse(await readFile(new URL('./config/verified-baseline.json',import.meta.url),'utf8'));
@@ -407,8 +407,14 @@ async function discover(symbol,refresh){
   const sources=[...result.flatMap(r=>r.status==='fulfilled'?r.value:[]),...related,...(filingIndex.companies[symbol]?.sources??[]),...(known[symbol]??[])];
   return [...new Map(sources.filter(s=>/^https:\/\/(?:www\.nseindia\.com|nsearchives\.nseindia\.com|archives\.nseindia\.com|www\.infosys\.com|www\.tcs\.com|www\.sec\.gov|sbi\.bank\.in|www\.bajajfinserv\.in|cms-assets\.bajajfinserv\.in|itcportal\.com|ntpc\.co\.in)\//i.test(s.url??'')).map(s=>[s.url,s])).values()];
 }
-async function document(source,refresh){
-  return cached('document:'+source.url,86400000,async()=>{
+function issuerMatches(content,company){
+  const normalize=value=>value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const name=normalize(company.name.replace(/\s+(LIMITED|LTD)\.?$/i,''));
+  const text=normalize(content);
+  return (company.isin&&text.includes(company.isin))||Boolean(name.length>=5&&text.includes(name));
+}
+async function document(source,refresh,company){
+  return cached('document:'+source.url+(company?':'+company.symbol:''),86400000,async()=>{
     const response=await archive(source.url,{'User-Agent':source.url.includes('sec.gov/')?(process.env.SEC_USER_AGENT||'FINN research prototype'):'Mozilla/5.0',Accept:'application/pdf,text/html;q=0.9'},{redirect:'error',signal:AbortSignal.timeout(20000)});
     const size=Number(response.headers.get('content-length'));
     if(size>25000000) throw Error('Document exceeds size limit');
@@ -429,6 +435,7 @@ async function document(source,refresh){
         content=await extractPdf(bytes);
       } catch {return {...source,hash,status:'PDF linked; extraction unavailable'};}
     }else if(new URL(source.url).pathname.endsWith('.xml')){
+      if(company&&!issuerMatches(bytes.toString(),company))throw Error('Filing issuer could not be verified');
       const quarters=parseNseQuarterly(bytes.toString(),true).quarters;
       content=quarters.slice(0,5).map(row=>'Quarter ended '+row.end+'. '+quarterlyComparison([row]).rows
         .filter(metric=>Number.isFinite(metric.value)).map(metric=>metric.label+' '+metric.value+' INR').join('; ')+'.').join(' ');
@@ -437,6 +444,8 @@ async function document(source,refresh){
       content=(/<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1]??html)
         .replace(/<(script|style|nav|footer|header)\b[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&nbsp;|&#160;/g,' ');
     }
+    if(company&&!isPdf&&!new URL(source.url).pathname.endsWith('.xml'))throw Error('Expected an exchange filing');
+    if(company&&isPdf&&!issuerMatches(content.slice(0,12000),company))throw Error('Filing issuer could not be verified');
     const clean=content.replace(/\s+/g,' ').trim();
     if(!isPdf&&clean) hash=createHash('sha256').update(clean).digest('hex');
     return {...source,hash,status:clean?'Read':'No extractable text',text:passages(clean,source.type)};
@@ -493,6 +502,21 @@ export async function research(symbol, mode, refresh=false) {
       text:values.join('; ')+'.'});
   }
   const company=directory?.rows.find(row=>row.symbol===symbol);
+  const key=process.env.GEMINI_API_KEY?.trim();
+  const model=process.env.GEMINI_MODEL?.trim()||DEFAULT_GEMINI_MODEL;
+  let discoveryStatus='';
+  if(mode==='live'&&company&&key&&!docs.some(source=>source.text)){
+    try{
+      const urls=await cached('gemini-discovery:'+model+':'+symbol,3600000,()=>discoverGeminiFilings({
+        key,model,company:{symbol,name:company.name,isin:company.isin}
+      }));
+      const recovered=await Promise.allSettled(urls.map(url=>document({
+        url,type:'Financial filing',label:'Exchange filing found through Google Search'
+      },refresh,company)));
+      docs.push(...recovered.flatMap(result=>result.status==='fulfilled'&&result.value.text?[result.value]:[]));
+      if(!docs.some(source=>source.text))discoveryStatus=' Google Search returned no readable filing that FINN could match to the company.';
+    }catch(error){discoveryStatus=' Google Search was unavailable. '+error.message;}
+  }
   const insights=mode==='live'?reportInsights(docs,annual,results,guidanceScorecard(symbol)):[];
   if(company){
     const sector=catalog.find(row=>row.symbol===symbol)?.sector;
@@ -500,9 +524,7 @@ export async function research(symbol, mode, refresh=false) {
   }
   const guidance=mode==='live'?guidanceScorecard(symbol):null;
   const readable=docs.flatMap((s,i)=>s.text?[{citation:i+1,type:s.type,label:s.label,url:s.url,evidence:s.text}]:[]);
-  const key=process.env.GEMINI_API_KEY?.trim();
-  const model=process.env.GEMINI_MODEL?.trim()||DEFAULT_GEMINI_MODEL;
-  const out={symbol,mode,createdAt:new Date().toISOString(),price,annual,results,guidance,sources:docs.map(({text,...source})=>source),insights,company,coverage:{financials:Boolean(results||annual),documents:readable.length,market:Boolean(price.date)},narrative:null,aiStatus:mode==='demo'?'Sample prices. Live mode retrieves primary documents.':readable.length?'Source highlights are available. Set GEMINI_API_KEY to enable the Gemini brief.':'Readable primary documents were unavailable for this request.'};
+  const out={symbol,mode,createdAt:new Date().toISOString(),price,annual,results,guidance,sources:docs.map(({text,...source})=>source),insights,company,coverage:{financials:Boolean(results||annual),documents:readable.length,market:Boolean(price.date)},narrative:null,aiStatus:mode==='demo'?'Sample prices. Live mode retrieves primary documents.':readable.length?'Source highlights are available. Set GEMINI_API_KEY to enable the Gemini brief.':'Readable primary documents were unavailable for this request.'+discoveryStatus};
   if(mode==='live'&&key&&readable.length){
     const payload=geminiPayload(symbol,readable,model);
     try {

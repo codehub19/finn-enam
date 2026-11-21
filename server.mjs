@@ -6,7 +6,7 @@ import {randomBytes,randomUUID,scrypt,timingSafeEqual,createHash} from 'node:cry
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
 import {catalog,seeded,categories,csvHoldings,briefingSlot,dateIST,validPurchaseDate} from './data.mjs';
-import {filings,quote,research,reportDiff,statements,searchEquities,filingInsight,companyLogo} from './providers.mjs';
+import {indexedCompany,filings,quote,research,reportDiff,statements,searchEquities,filingInsight,companyLogo} from './providers.mjs';
 import {worldNews} from './news.mjs';
 const hashPassword=promisify(scrypt);
 const root=fileURLToPath(new URL('.',import.meta.url));
@@ -123,8 +123,25 @@ async function digest(data,hours,refresh=false){
   const sectors=new Set(catalog.filter(s=>held.has(s.symbol)).map(s=>s.sector));
   const related=new Set(catalog.filter(s=>!held.has(s.symbol)&&sectors.has(s.sector)).map(s=>s.symbol));
   const {rows,...feed}=data.mode==='live'?await briefingFilings(refresh):await filings(hours,data.mode,refresh);
+  let combined=rows;
+  if(data.mode==='live'&&(feed.error||feed.coverageNote)){
+    const symbols=[...new Set([...held,...watched,...related])];
+    const recovered=await mapLimit(symbols,5,async symbol=>{
+      try{
+        const item=await snapshot('bse-recent:'+symbol,async()=>({rows:(await indexedCompany(symbol,refresh)).rows}),refresh);
+        return item.rows;
+      }catch{return [];}
+    });
+    const additional=recovered.flat().filter(row=>row.timestamp>=Date.now()-168*3600000&&row.timestamp<=Date.now());
+    if(additional.length){
+      combined=[...new Map([...rows,...additional].map(row=>[row.id,row])).values()];
+      delete feed.error;
+      feed.scope='Available NSE and BSE announcements';
+      feed.coverageNote='Includes recent BSE disclosures indexed by Screener.in. Exchange coverage is partial.';
+    }
+  }
   const cutoff=Date.now()-hours*3600000;
-  const ranked=rows.filter(row=>row.timestamp>=cutoff).map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
+  const ranked=combined.filter(row=>row.timestamp>=cutoff).map(r=>({...r,why:eventLabel(r),alert:r.category!=='Routine'&&data.settings.types.includes(r.category)}))
     .sort((a,b)=>Number(b.alert)-Number(a.alert)||Number(a.category==='Routine')-Number(b.category==='Routine')||b.timestamp-a.timestamp);
   return {checkedAt:new Date().toISOString(),...feed,owned:ranked.filter(r=>held.has(r.symbol)),related:ranked.filter(r=>related.has(r.symbol)&&r.category!=='Routine'),watch:ranked.filter(r=>watched.has(r.symbol)&&!held.has(r.symbol)&&r.category!=='Routine')};
 }
@@ -352,10 +369,7 @@ async function route(req,res){
           return json(res,200,{...cached,draftId:prior.id});
         }
       }
-      let report=await research(symbol,mode,input.refresh===true);
-      if(mode==='live'&&!report.coverage?.financials&&!report.coverage?.documents&&input.refresh!==true){
-        report=await research(symbol,mode,true);
-      }
+      const report=await research(symbol,mode,input.refresh===true);
       const verified=report.coverage?.financials||report.coverage?.documents;
       if(mode==='live'&&!verified&&!prior)throw fail(503,'No readable primary filings were available for '+symbol+'. Try again later.');
       if(mode==='live'&&!verified&&prior)throw fail(503,'Fresh company filings were unavailable. Your previous research is still available.');

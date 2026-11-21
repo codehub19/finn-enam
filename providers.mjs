@@ -1,3 +1,4 @@
+import {companyIndex} from './company-index.mjs';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {catalog,classify,dateIST,demoBars,metrics,fundamentals} from './data.mjs';
@@ -100,6 +101,7 @@ const nseHeaders={'User-Agent':'Mozilla/5.0','Referer':exchangePage,'Accept':'ap
 async function archive(url,headers={},options={}){
   try{return await get(url,headers,options);}
   catch(error){
+    if(url.startsWith('https://www.bseindia.com/xml-data/corpfiling/AttachLive/'))return get(url.replace('/AttachLive/','/AttachHis/'),headers,options);
     if(!url.startsWith('https://nsearchives.nseindia.com/'))throw error;
     return get(url.replace('https://nsearchives.nseindia.com/','https://archives.nseindia.com/'),headers,options);
   }
@@ -228,7 +230,9 @@ export async function filings(hours,mode,refresh=false,rssOnly=false) {
     if(rssOnly)throw Error('RSS filing requested');
     const rows=await cached('filings:'+from+':'+to,180000,async()=>{
       const response=await get(nse+'/api/corporate-announcements?index=equities&from_date='+from+'&to_date='+to,nseHeaders);
-      return normalizeFilings(await response.json());
+      const rows=normalizeFilings(await response.json());
+      if(!rows.length&&hours>=72)throw Error('Exchange returned an empty multi-day feed');
+      return rows;
     },refresh);
     return {mode,scope:'NSE equity announcements returned by the exchange feed',rows:inWindow(rows)};
   } catch(error) {primaryError=error;}
@@ -381,6 +385,19 @@ export async function nseQuarterly(symbol,refresh=false,asOf=Date.now()){
   if(!matching.length)return fallback();
   return {quarterly:quarterlyComparison(matching),years,periods:matching,currency:'INR',source:matching[0].source,basis:chosen.consolidated??'Reported',note:'Reported NSE figures. The EBITDA proxy, where available, adds finance costs and depreciation to profit before tax. Changes use comparable positive baselines.'};
 }
+export async function indexedCompany(symbol,refresh=false){
+  return cached('company-index:'+symbol,4*3600000,async()=>{
+    const base='https://www.screener.in/company/'+encodeURIComponent(symbol)+'/';
+    for(const url of [base+'consolidated/',base]){
+      const res=await fetch(url,{signal:AbortSignal.timeout(6500),redirect:'manual'});
+      if(!res.ok)continue;
+      const html=await res.text();
+      if(!html.includes('data-company-id='))continue;
+      return companyIndex(html,symbol,url);
+    }
+    throw Error('Company index unavailable');
+  },refresh);
+}
 async function discover(symbol,refresh){
   const result=await Promise.allSettled([
     cached('annual:'+symbol,3600000,async()=>{
@@ -464,13 +481,19 @@ function passages(text='',type){
   return windows.join('\n…\n');
 }
 export async function research(symbol, mode, refresh=false) {
-  const [price, secAnnual, discovered, results, directory]=await Promise.all([
+  const [price, secAnnual, discovered, exchangeResults, directory, index]=await Promise.all([
     quote(symbol,mode,refresh),
     mode==='live'?statements(symbol,refresh).catch(()=>null):null,
     mode==='live'?discover(symbol,refresh):known[symbol]??[],
     mode==='live'?nseQuarterly(symbol,refresh).catch(()=>null):null,
-    mode==='live'?loadEquityDirectory():null
+    mode==='live'?loadEquityDirectory():null,
+    mode==='live'?indexedCompany(symbol,refresh).catch(()=>null):null
   ]);
+  const results=exchangeResults??index?.results;
+  const company=directory?.rows.find(row=>row.symbol===symbol);
+  for(const source of index?.sources??[]){
+    if(!discovered.some(row=>row.type===source.type))discovered.push({...source,indexed:true});
+  }
   const years=results?.years?.filter(row=>!row.bank).map(row=>({
     end:row.end,revenue:row.revenue,income:row.income,equity:row.balance?.equity,
     cash:row.cashFlow?.amount,source:row.source
@@ -483,7 +506,7 @@ export async function research(symbol, mode, refresh=false) {
   const docs=await Promise.all(types.map(async type=>{
     const candidates=discovered.filter(s=>s.type===type);
     if(mode==='demo') return {...candidates[0],status:'Reference link only in sample mode'};
-    const fetchSource=source=>document(source,refresh).catch(()=>({...source,status:'Fetch unavailable'}));
+    const fetchSource=source=>document(source,refresh,source.indexed?company:null).catch(()=>({...source,status:'Fetch unavailable'}));
     const primary=await Promise.all(candidates.slice(0,2).map(fetchSource));
     if(primary.some(doc=>doc.text))return primary.find(doc=>doc.text);
     const fallback=await Promise.all(candidates.slice(2,5).map(fetchSource));
@@ -492,7 +515,7 @@ export async function research(symbol, mode, refresh=false) {
   if(results?.quarterly){
     const q=results.quarterly;
     const values=q.rows.filter(row=>Number.isFinite(row.value)).map(row=>row.label+' '+row.value+' INR');
-    docs.push({type:'Financial filing',label:'NSE reported results · '+q.period,url:results.source,status:results.stale?'Verified snapshot':'Structured filing read',
+    docs.push({type:'Financial filing',label:(results.secondary?'Screener.in quarterly figures':'NSE reported results')+' · '+q.period,url:results.source,status:results.secondary?'Secondary financial data':results.stale?'Verified snapshot':'Structured filing read',
       text:'Quarter ended '+q.period+'. '+results.basis+'. '+values.join('; ')+'.'});
   }
   if(annual?.years.length){
@@ -501,11 +524,10 @@ export async function research(symbol, mode, refresh=false) {
     docs.push({type:'Annual financial facts',label:'Annual filed financial statements',url:annual.source,status:'Structured filing read',
       text:values.join('; ')+'.'});
   }
-  const company=directory?.rows.find(row=>row.symbol===symbol);
   const key=process.env.GEMINI_API_KEY?.trim();
   const model=process.env.GEMINI_MODEL?.trim()||DEFAULT_GEMINI_MODEL;
   let discoveryStatus='';
-  if(mode==='live'&&company&&key&&!docs.some(source=>source.text)){
+  if(mode==='live'&&company&&key&&!docs.some(source=>source.text&&source.status!=='Secondary financial data')){
     try{
       const urls=await cached('gemini-discovery:'+model+':'+symbol,3600000,()=>discoverGeminiFilings({
         key,model,company:{symbol,name:company.name,isin:company.isin}
@@ -536,7 +558,7 @@ export async function research(symbol, mode, refresh=false) {
         return sections;
       });
       out.aiModel=model;
-      out.aiStatus='Gemini brief grounded in the primary-source excerpts.';
+      out.aiStatus='Gemini brief grounded in the cited sources.';
     }catch(error){out.aiStatus='Gemini brief unavailable: '+error.message;}
   }
   return out;

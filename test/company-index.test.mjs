@@ -17,3 +17,16 @@ test('company outside the seed list gets dated filings and comparable quarterly 
   assert.equal(index.results.periods[0].income,undefined);
   assert.equal(companyIndex(html.replaceAll('www.bseindia.com','example.com'),'TEST','').sources.length,0);
 });
+
+test('research survives unavailable filing indexes with dated secondary financials',async t=>{
+  const {research}=await import('../providers.mjs');
+  t.mock.method(globalThis,'fetch',async url=>{
+    if(String(url).includes('scanner.tradingview.com'))
+      return Response.json({data:[{s:'NSE:DEEPAKNTR',d:['Deepak Nitrite','Process Industries','Specialty Chemicals',100e7,12e7,1759190400,'INR',8e7,380e7,1743379200,40e7,28e7]}]});
+    throw Error('Upstream unavailable');
+  });
+  const r=await research('DEEPAKNTR','live',true);
+  assert.equal(r.results.provider,'TradingView');
+  assert.equal(r.results.periods[0].income,12e7);
+  assert.ok(r.sources.some(s=>s.status==='Secondary financial data'&&s.url.includes('NSE-DEEPAKNTR')));
+});

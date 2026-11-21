@@ -60,16 +60,34 @@ export function discoveredFilingUrls(candidate){
   }))].slice(0,3);
 }
 
-export async function discoverGeminiFilings({key,model=DEFAULT_GEMINI_MODEL,company,request=fetch}){
+export async function discoverGeminiFilings({key,model=DEFAULT_GEMINI_MODEL,company,includeEvidence=false,request=fetch}){
   if(!/^gemini-[a-z0-9.-]+$/i.test(model))throw Error('Invalid GEMINI_MODEL.');
   const response=await request('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent',{
-    method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},signal:AbortSignal.timeout(22000),
+    method:'POST',headers:{'x-goog-api-key':key,'Content-Type':'application/json'},signal:AbortSignal.timeout(30000),
     body:JSON.stringify({
       tools:[{google_search:{}}],
-      contents:[{role:'user',parts:[{text:'Use Google Search to find up to three recent official NSE or BSE archive PDF or XML documents for this exact company. Prefer a financial results filing, annual report and earnings transcript. Return only original direct document URLs, one per line. No Markdown, redirects, news articles, invented URLs or summaries. Company: '+JSON.stringify(company)}]}],
+      contents:[{role:'user',parts:[{text:includeEvidence?'Use Google Search for this exact NSE issuer: '+JSON.stringify(company)+'. Find the most recent issuer annual report, exchange financial filing, and earnings transcript. Cite sources inline for each factual sentence. State the exact issuer name in each sentence. Describe business segments, dated financials, debt, operating cash flow, growth or margin guidance and management commentary where supported. Use short factual sentences with periods, currency and basis for figures. Do not calculate, speculate, give advice or conflate subsidiaries. Include direct exchange filing links if found.': 'Use Google Search to find up to three recent official NSE or BSE archive PDF or XML documents for this exact company. Prefer a financial results filing, annual report and earnings transcript. Return only original direct document URLs, one per line. No Markdown, redirects, news articles, invented URLs or summaries. Company: '+JSON.stringify(company)}]}],
       generationConfig:{maxOutputTokens:1500,...(/^gemini-3[.-]/.test(model)?{thinkingConfig:{thinkingLevel:'low'}}:{})}
     })
   });
   if(!response.ok)throw Error('Document search returned HTTP '+response.status);
-  return discoveredFilingUrls((await response.json()).candidates?.[0]);
+  const candidate=(await response.json()).candidates?.[0];
+  const urls=discoveredFilingUrls(candidate);
+  if(!includeEvidence)return urls;
+  const metadata=candidate?.groundingMetadata;
+  const issuer=company.name.toLowerCase().replace(/\s+(limited|ltd)\.?$/i,'').trim();
+  const groups=new Map();
+  for(const support of metadata?.groundingSupports??[]){
+    const statement=support.segment?.text?.trim();
+    if(!statement||!statement.toLowerCase().includes(issuer))continue;
+    for(const index of support.groundingChunkIndices??[]){
+      const web=metadata.groundingChunks?.[index]?.web;
+      const url=URL.parse(web?.uri??'');
+      if(!url||url.protocol!=='https:'||url.username||url.password)continue;
+      if(!groups.has(url.href))groups.set(url.href,{type:'Search evidence',label:'Google Search · '+(web.title||url.hostname),url:url.href,status:'Search-cited account',text:''});
+      const item=groups.get(url.href);
+      if(item.text.length<5000)item.text+=statement+' ';
+    }
+  }
+  return {urls,evidence:[...groups.values()].slice(0,8)};
 }

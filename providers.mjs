@@ -398,6 +398,32 @@ export async function indexedCompany(symbol,refresh=false){
     throw Error('Company index unavailable');
   },refresh);
 }
+async function vendorFinancials(symbol,refresh){
+  return cached('vendor-financials:'+symbol,4*3600000,async()=>{
+    const id='NSE:'+symbol;
+    const columns=['description','sector','industry','total_revenue_fq','net_income_fq','fiscal_period_end_fq','currency','total_debt_fq','total_revenue_fy','fiscal_period_end_fy','net_income_fy','cash_f_operating_activities_fy'];
+    const response=await get('https://scanner.tradingview.com/india/scan',{'Content-Type':'application/json'},{
+      method:'POST',body:JSON.stringify({symbols:{tickers:[id],query:{types:[]}},columns})
+    });
+    const row=(await response.json()).data?.find(item=>item.s===id);
+    if(!row)return null;
+    const [name,sector,industry,revenue,income,quarter,currency,debt,sales,year,profit,cash]=row.d;
+    if(currency!=='INR'||!Number.isFinite(revenue)||!Number.isFinite(quarter)||quarter<=0||quarter*1000>Date.now())return null;
+    const end=new Date(quarter*1000).toISOString().slice(0,10);
+    const source='https://www.tradingview.com/symbols/NSE-'+encodeURIComponent(symbol)+'/financials-overview/';
+    const periods=[{end,revenue,income,source}];
+    const results={periods,quarterly:quarterlyComparison(periods),currency,source,secondary:true,provider:'TradingView',basis:'Provider-reported',note:'Period-labelled financial data supplied by TradingView.'};
+    const facts=[name+' ('+symbol+') is classified in '+industry+' within '+sector+'.'];
+    if(Number.isFinite(debt))facts.push('Reported total debt at '+end+' was INR '+debt+'.');
+    if(Number.isFinite(year)&&year>0&&year*1000<=Date.now()){
+      const date=new Date(year*1000).toISOString().slice(0,10);
+      for(const [label,value] of [['revenue',sales],['net income',profit],['operating cash flow',cash]]){
+        if(Number.isFinite(value))facts.push('Fiscal year ending '+date+': '+label+' INR '+value+'.');
+      }
+    }
+    return {results,evidence:{type:'Financial data',label:'TradingView financial statements',url:source,status:'Secondary financial data',text:facts.join(' ')}};
+  },refresh);
+}
 async function discover(symbol,refresh){
   const result=await Promise.allSettled([
     cached('annual:'+symbol,3600000,async()=>{
@@ -489,10 +515,11 @@ export async function research(symbol, mode, refresh=false) {
     mode==='live'?loadEquityDirectory():null,
     mode==='live'?indexedCompany(symbol,refresh).catch(()=>null):null
   ]);
-  const results=exchangeResults??index?.results;
+  const vendor=mode==='live'&&!exchangeResults&&!index?.results?await vendorFinancials(symbol,refresh).catch(()=>null):null;
+  const results=exchangeResults??index?.results??vendor?.results;
   const company=directory?.rows.find(row=>row.symbol===symbol);
   for(const source of index?.sources??[]){
-    if(!discovered.some(row=>row.type===source.type))discovered.push({...source,indexed:true});
+    if(!discovered.some(row=>row.url===source.url))discovered.push({...source,indexed:true});
   }
   const years=results?.years?.filter(row=>!row.bank).map(row=>({
     end:row.end,revenue:row.revenue,income:row.income,equity:row.balance?.equity,
@@ -512,10 +539,11 @@ export async function research(symbol, mode, refresh=false) {
     const fallback=await Promise.all(candidates.slice(2,5).map(fetchSource));
     return fallback.find(doc=>doc.text)??primary[0];
   }));
+  if(vendor)docs.push(vendor.evidence);
   if(results?.quarterly){
     const q=results.quarterly;
     const values=q.rows.filter(row=>Number.isFinite(row.value)).map(row=>row.label+' '+row.value+' INR');
-    docs.push({type:'Financial filing',label:(results.secondary?'Screener.in quarterly figures':'NSE reported results')+' · '+q.period,url:results.source,status:results.secondary?'Secondary financial data':results.stale?'Verified snapshot':'Structured filing read',
+    docs.push({type:'Financial filing',label:(results.secondary?(results.provider??'Screener.in')+' quarterly figures':'NSE reported results')+' · '+q.period,url:results.source,status:results.secondary?'Secondary financial data':results.stale?'Verified snapshot':'Structured filing read',
       text:'Quarter ended '+q.period+'. '+results.basis+'. '+values.join('; ')+'.'});
   }
   if(annual?.years.length){
@@ -529,13 +557,14 @@ export async function research(symbol, mode, refresh=false) {
   let discoveryStatus='';
   if(mode==='live'&&company&&key&&!docs.some(source=>source.text&&source.status!=='Secondary financial data')){
     try{
-      const urls=await cached('gemini-discovery:'+model+':'+symbol,3600000,()=>discoverGeminiFilings({
-        key,model,company:{symbol,name:company.name,isin:company.isin}
+      const discovery=await cached('gemini-evidence:'+model+':'+symbol,3600000,()=>discoverGeminiFilings({
+        key,model,includeEvidence:true,company:{symbol,name:company.name,isin:company.isin}
       }));
-      const recovered=await Promise.allSettled(urls.map(url=>document({
+      const recovered=await Promise.allSettled(discovery.urls.map(url=>document({
         url,type:'Financial filing',label:'Exchange filing found through Google Search'
       },refresh,company)));
       docs.push(...recovered.flatMap(result=>result.status==='fulfilled'&&result.value.text?[result.value]:[]));
+      if(!docs.some(source=>source.text&&source.status!=='Secondary financial data'))docs.push(...discovery.evidence);
       if(!docs.some(source=>source.text))discoveryStatus=' Google Search returned no readable filing that FINN could match to the company.';
     }catch(error){discoveryStatus=' Google Search was unavailable. '+error.message;}
   }
